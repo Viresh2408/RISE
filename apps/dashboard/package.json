@@ -1,0 +1,11 @@
+{
+  "name": "rise-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"Dashboard dev stub\"",
+    "build": "echo \"Dashboard build stub\"",
+    "lint": "echo \"Dashboard lint stub\"",
+    "test": "echo \"Dashboard test stub\""
+  }
+}

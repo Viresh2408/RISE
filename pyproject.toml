@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "rise-monorepo"
+version = "0.1.0"
+description = "RISE — Autonomous Incident Remediation System Monorepo"
+authors = ["RISE Team <dev@rise.local>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+rise-core = { path = "packages/rise-core", develop = true }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+black = "^24.0.0"
+ruff = "^0.3.0"
+mypy = "^1.8.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"

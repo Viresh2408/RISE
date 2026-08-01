@@ -1,0 +1,10 @@
+# Security Scan Workflow stub (Trivy + Semgrep on every PR)
+name: Security Scan
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4

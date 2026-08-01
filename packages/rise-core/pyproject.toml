@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "rise-core"
+version = "0.1.0"
+description = "RISE Core shared library: models, schemas, gateway clients, audit logger"
+authors = ["RISE Team <dev@rise.local>"]
+readme = "README.md"
+packages = [{include = "rise_core", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"

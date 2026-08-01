@@ -1,0 +1,5 @@
+version: '3.8'
+
+services:
+  # Base docker-compose stub for local dev stack (Postgres, Redis, Qdrant, n8n)
+  # Extended in Step 0.2

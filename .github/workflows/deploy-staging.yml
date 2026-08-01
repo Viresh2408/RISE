@@ -1,0 +1,10 @@
+# Deploy Staging Workflow stub
+name: Deploy Staging
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4

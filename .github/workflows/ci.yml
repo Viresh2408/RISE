@@ -1,0 +1,10 @@
+# CI Workflow stub (lint, unit tests, build on every PR)
+name: CI
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4

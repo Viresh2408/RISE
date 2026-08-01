@@ -1,0 +1,15 @@
+{
+  "name": "rise-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RISE — Autonomous Incident Remediation System Monorepo",
+  "scripts": {
+    "dev": "pnpm --filter rise-dashboard dev",
+    "build": "pnpm --filter rise-dashboard build",
+    "lint": "pnpm --filter rise-dashboard lint",
+    "test": "pnpm --filter rise-dashboard test"
+  },
+  "devDependencies": {
+    "prettier": "^3.2.5"
+  }
+}

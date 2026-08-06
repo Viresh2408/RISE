@@ -1,0 +1,1899 @@
+openapi: 3.0.3
+info:
+  title: RISE API
+  version: 1.0.0
+  description: RISE — Autonomous Incident Remediation System API Specification
+servers:
+  - url: https://api.rise.internal/api/v1
+    description: Internal API Gateway
+
+security:
+  - BearerAuth: []
+
+paths:
+  /auth/session:
+    post:
+      summary: Exchange Supabase login for internal session context
+      operationId: postAuthSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              default: {}
+      responses:
+        '200':
+          description: Session context retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents:
+    get:
+      summary: List incidents with filters
+      operationId: listIncidents
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, investigating, awaiting_approval, resolved, closed]
+        - name: severity
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [SEV1, SEV2, SEV3, SEV4]
+        - name: service
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Paginated list of incidents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentListEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+    post:
+      summary: Manually create an incident
+      operationId: createIncident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentCreateRequest'
+      responses:
+        '201':
+          description: Incident created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}:
+    get:
+      summary: Full incident detail
+      operationId: getIncident
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Expanded incident details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentDetailEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+    patch:
+      summary: Update severity or status manually
+      operationId: patchIncident
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentUpdateRequest'
+      responses:
+        '200':
+          description: Incident updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/reinvestigate:
+    post:
+      summary: Re-trigger agent pipeline for an incident
+      operationId: reinvestigateIncident
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '202':
+          description: Agent pipeline re-investigation queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReinvestigateEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+        '429':
+          $ref: '#/components/responses/429RateLimited'
+
+  /incidents/{incident_id}/comment:
+    post:
+      summary: Add human comment to incident timeline
+      operationId: addIncidentComment
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCreateRequest'
+      responses:
+        '201':
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/agent-runs:
+    get:
+      summary: List all agent pipeline executions for an incident
+      operationId: listAgentRuns
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of agent runs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRunListEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /agent-runs/{agent_run_id}/steps:
+    get:
+      summary: Per-node execution detail for an agent run
+      operationId: getAgentRunSteps
+      parameters:
+        - name: agent_run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of agent step results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStepListEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/root-cause:
+    get:
+      summary: Root cause analysis for an incident
+      operationId: getRootCause
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Root cause details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RootCauseEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/impact:
+    get:
+      summary: Impact analysis for an incident
+      operationId: getImpact
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Impact assessment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImpactEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/decision:
+    get:
+      summary: Decision and action plan recommendation
+      operationId: getDecision
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Decision and action plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/actions/{action_id}/approve:
+    post:
+      summary: Approve a pending high-risk action
+      operationId: approveAction
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: action_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionApproveRequest'
+      responses:
+        '200':
+          description: Action approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionApproveEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '409':
+          $ref: '#/components/responses/409ActionPlanChanged'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/actions/{action_id}/reject:
+    post:
+      summary: Reject a pending action
+      operationId: rejectAction
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: action_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionRejectRequest'
+      responses:
+        '200':
+          description: Action rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionRejectEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/actions/{action_id}/modify:
+    post:
+      summary: Submit modified action plan for re-evaluation
+      operationId: modifyAction
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: action_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionModifyRequest'
+      responses:
+        '200':
+          description: Action plan re-evaluated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionModifyEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/actions:
+    get:
+      summary: List all remediation actions for an incident
+      operationId: listActions
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Remediation actions list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemediationActionListEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /incidents/{incident_id}/verification:
+    get:
+      summary: Verification checks status
+      operationId: getVerification
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Verification status and check results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /knowledge:
+    get:
+      summary: Browse or search knowledge base entries
+      operationId: searchKnowledge
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: service
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: tags
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Matching knowledge base entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeListEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+    post:
+      summary: Manually create a runbook / knowledge entry
+      operationId: createKnowledge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeCreateRequest'
+      responses:
+        '201':
+          description: Knowledge entry created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /policies:
+    get:
+      summary: List risk policies
+      operationId: listPolicies
+      responses:
+        '200':
+          description: List of risk policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskPolicyListEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+    post:
+      summary: Define a new risk policy
+      operationId: createPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyCreateRequest'
+      responses:
+        '201':
+          description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskPolicyEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '403':
+          $ref: '#/components/responses/403RiskPolicyViolation'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /policies/{policy_id}:
+    put:
+      summary: Update a risk policy (creates a new version)
+      operationId: updatePolicy
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyUpdateRequest'
+      responses:
+        '200':
+          description: Policy updated to new version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskPolicyEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /integrations:
+    get:
+      summary: List integrations
+      operationId: listIntegrations
+      responses:
+        '200':
+          description: List of connected integrations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationListEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  /integrations/{type}/connect:
+    post:
+      summary: Initiate OAuth/App connection flow
+      operationId: connectIntegration
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OAuth redirect URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationConnectEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /integrations/{type}:
+    delete:
+      summary: Disconnect an integration
+      operationId: deleteIntegration
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Integration disconnected
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '404':
+          $ref: '#/components/responses/404NotFound'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /reports/mttr:
+    get:
+      summary: Get MTTR report
+      operationId: getMttrReport
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: service
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: MTTR analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MttrReportEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /reports/autonomy:
+    get:
+      summary: Get autonomy resolution percentages
+      operationId: getAutonomyReport
+      responses:
+        '200':
+          description: Autonomy percentages report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutonomyReportEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  /webhooks/cloudwatch:
+    post:
+      summary: CloudWatch SNS webhook receiver
+      operationId: cloudwatchWebhook
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponseEnvelope'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /webhooks/alertmanager:
+    post:
+      summary: Alertmanager webhook receiver
+      operationId: alertmanagerWebhook
+      security: []
+      parameters:
+        - name: X-RISE-Secret
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponseEnvelope'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /webhooks/github:
+    post:
+      summary: GitHub event webhook receiver
+      operationId: githubWebhook
+      security: []
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponseEnvelope'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /webhooks/slack:
+    post:
+      summary: Slack interactive payload webhook receiver
+      operationId: slackWebhook
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookResponseEnvelope'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /audit:
+    get:
+      summary: Query read-only audit log
+      operationId: listAuditEvents
+      parameters:
+        - name: incident_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: actor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Audit events list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventListEnvelope'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+        '422':
+          $ref: '#/components/responses/422ValidationError'
+
+  /healthz:
+    get:
+      summary: Liveness check
+      operationId: healthz
+      security: []
+      responses:
+        '200':
+          description: Service is live
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthEnvelope'
+
+  /readyz:
+    get:
+      summary: Readiness check
+      operationId: readyz
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthEnvelope'
+        '503':
+          $ref: '#/components/responses/503IntegrationUnavailable'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Meta:
+      type: object
+      required:
+        - request_id
+        - timestamp
+      properties:
+        request_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        next_cursor:
+          type: string
+          nullable: true
+
+    ErrorDetail:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - RISK_POLICY_VIOLATION
+            - APPROVAL_EXPIRED
+            - ACTION_PLAN_CHANGED
+            - RESOURCE_LOCKED
+            - INTEGRATION_UNAVAILABLE
+            - RATE_LIMITED
+            - UNAUTHORIZED
+            - NOT_FOUND
+        message:
+          type: string
+        details:
+          type: object
+
+    ErrorEnvelope:
+      type: object
+      required:
+        - data
+        - meta
+        - error
+      properties:
+        data:
+          type: object
+          nullable: true
+          default: null
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    Session:
+      type: object
+      required:
+        - user_id
+        - roles
+        - tenant_id
+      properties:
+        user_id:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        tenant_id:
+          type: string
+
+    SessionEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/Session'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    Incident:
+      type: object
+      required: [id, title, description, severity, status, created_at]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [SEV1, SEV2, SEV3, SEV4]
+        status:
+          type: string
+          enum: [open, investigating, awaiting_approval, resolved, closed]
+        affected_service:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolution_note:
+          type: string
+          nullable: true
+
+    IncidentDetail:
+      allOf:
+        - $ref: '#/components/schemas/Incident'
+        - type: object
+          properties:
+            timeline:
+              type: array
+              items:
+                type: object
+            root_cause:
+              type: object
+              nullable: true
+            impact:
+              type: object
+              nullable: true
+            actions:
+              type: array
+              items:
+                type: object
+            approvals:
+              type: array
+              items:
+                type: object
+
+    IncidentCreateRequest:
+      type: object
+      required: [title, description, severity, affected_service]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [SEV1, SEV2, SEV3, SEV4]
+        affected_service:
+          type: string
+
+    IncidentUpdateRequest:
+      type: object
+      required: [status, resolution_note]
+      properties:
+        status:
+          type: string
+        resolution_note:
+          type: string
+
+    CommentCreateRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+
+    Comment:
+      type: object
+      required: [id, incident_id, text, created_at, author]
+      properties:
+        id:
+          type: string
+        incident_id:
+          type: string
+        text:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        author:
+          type: string
+
+    CommentEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/Comment'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    IncidentListEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Incident'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    IncidentEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/Incident'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    IncidentDetailEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/IncidentDetail'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    ReinvestigateData:
+      type: object
+      required: [agent_run_id, status]
+      properties:
+        agent_run_id:
+          type: string
+        status:
+          type: string
+
+    ReinvestigateEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/ReinvestigateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    AgentRun:
+      type: object
+      required: [id, incident_id, status, created_at]
+      properties:
+        id:
+          type: string
+        incident_id:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    AgentRunListEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentRun'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    AgentStepResult:
+      type: object
+      required: [id, agent_run_id, node_name, input, output, confidence, duration_ms]
+      properties:
+        id:
+          type: string
+        agent_run_id:
+          type: string
+        node_name:
+          type: string
+        input:
+          type: object
+        output:
+          type: object
+        confidence:
+          type: number
+        duration_ms:
+          type: number
+        llm_trace_link:
+          type: string
+          nullable: true
+
+    AgentStepListEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentStepResult'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    Evidence:
+      type: object
+      required: [id, type, description, source]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        source:
+          type: string
+
+    IncidentRef:
+      type: object
+      required: [id, title, similarity]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        similarity:
+          type: number
+
+    RootCause:
+      type: object
+      required: [cause, confidence, evidence, similar_incidents]
+      properties:
+        cause:
+          type: string
+        confidence:
+          type: number
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/Evidence'
+        similar_incidents:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentRef'
+
+    RootCauseEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/RootCause'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    Impact:
+      type: object
+      required: [blast_radius, severity, estimated_users_affected, business_impact_notes]
+      properties:
+        blast_radius:
+          type: array
+          items:
+            type: string
+        severity:
+          type: string
+        estimated_users_affected:
+          type: integer
+        business_impact_notes:
+          type: string
+
+    ImpactEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/Impact'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    ActionPlan:
+      type: object
+      required: [id, description, steps]
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+        steps:
+          type: array
+          items:
+            type: string
+
+    Decision:
+      type: object
+      required: [risk_tier, confidence, recommended_action, requires_approval]
+      properties:
+        risk_tier:
+          type: string
+        confidence:
+          type: number
+        recommended_action:
+          $ref: '#/components/schemas/ActionPlan'
+        requires_approval:
+          type: boolean
+
+    DecisionEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/Decision'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    ActionApproveRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          nullable: true
+
+    ActionApproveData:
+      type: object
+      required: [status, execution_status]
+      properties:
+        status:
+          type: string
+        execution_status:
+          type: string
+
+    ActionApproveEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/ActionApproveData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    ActionRejectRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+
+    ActionRejectData:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    ActionRejectEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/ActionRejectData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    ActionModifyRequest:
+      type: object
+      required: [modified_plan]
+      properties:
+        modified_plan:
+          $ref: '#/components/schemas/ActionPlan'
+
+    ActionModifyData:
+      type: object
+      required: [status, new_risk_tier]
+      properties:
+        status:
+          type: string
+        new_risk_tier:
+          type: string
+
+    ActionModifyEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/ActionModifyData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    RemediationAction:
+      type: object
+      required: [id, incident_id, name, risk_tier, status]
+      properties:
+        id:
+          type: string
+        incident_id:
+          type: string
+        name:
+          type: string
+        risk_tier:
+          type: string
+        status:
+          type: string
+
+    RemediationActionListEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RemediationAction'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    CheckItem:
+      type: object
+      required: [name, result, value]
+      properties:
+        name:
+          type: string
+        result:
+          type: string
+        value:
+          type: string
+
+    Verification:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [passed, failed, pending]
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckItem'
+
+    VerificationEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/Verification'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    KnowledgeEntry:
+      type: object
+      required: [id, title, content, tags, created_at]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        content:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        service:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    KnowledgeCreateRequest:
+      type: object
+      required: [title, content, tags]
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+
+    KnowledgeListEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/KnowledgeEntry'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    KnowledgeEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/KnowledgeEntry'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    RiskPolicy:
+      type: object
+      required: [id, action_pattern, environment, risk_tier, requires_approval, max_blast_radius, version]
+      properties:
+        id:
+          type: string
+        action_pattern:
+          type: string
+        environment:
+          type: string
+        risk_tier:
+          type: string
+          enum: [low, medium, high, critical]
+        requires_approval:
+          type: boolean
+        max_blast_radius:
+          type: integer
+        version:
+          type: integer
+
+    PolicyCreateRequest:
+      type: object
+      required: [action_pattern, environment, risk_tier, requires_approval, max_blast_radius]
+      properties:
+        action_pattern:
+          type: string
+        environment:
+          type: string
+        risk_tier:
+          type: string
+          enum: [low, medium, high, critical]
+        requires_approval:
+          type: boolean
+        max_blast_radius:
+          type: integer
+
+    PolicyUpdateRequest:
+      type: object
+      properties:
+        action_pattern:
+          type: string
+        environment:
+          type: string
+        risk_tier:
+          type: string
+          enum: [low, medium, high, critical]
+        requires_approval:
+          type: boolean
+        max_blast_radius:
+          type: integer
+
+    RiskPolicyListEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskPolicy'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    RiskPolicyEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/RiskPolicy'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    Integration:
+      type: object
+      required: [type, status, scopes]
+      properties:
+        type:
+          type: string
+        status:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+
+    IntegrationListEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Integration'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    IntegrationConnectData:
+      type: object
+      required: [redirect_url]
+      properties:
+        redirect_url:
+          type: string
+
+    IntegrationConnectEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/IntegrationConnectData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    MttrReport:
+      type: object
+      required: [avg_mttr_minutes, trend]
+      properties:
+        avg_mttr_minutes:
+          type: number
+        trend:
+          type: array
+          items:
+            type: object
+
+    MttrReportEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/MttrReport'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    AutonomyReport:
+      type: object
+      required: [auto_resolved_pct, human_approved_pct, rejected_pct]
+      properties:
+        auto_resolved_pct:
+          type: number
+        human_approved_pct:
+          type: number
+        rejected_pct:
+          type: number
+
+    AutonomyReportEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/AutonomyReport'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    WebhookResponseData:
+      type: object
+      required: [received]
+      properties:
+        received:
+          type: boolean
+
+    WebhookResponseEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/WebhookResponseData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    AuditEvent:
+      type: object
+      required: [id, actor, action, timestamp, details]
+      properties:
+        id:
+          type: string
+        incident_id:
+          type: string
+          nullable: true
+        actor:
+          type: string
+        action:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        details:
+          type: object
+
+    AuditEventListEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+    HealthData:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+
+    HealthEnvelope:
+      type: object
+      required: [data, meta, error]
+      properties:
+        data:
+          $ref: '#/components/schemas/HealthData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+        error:
+          type: object
+          nullable: true
+
+  responses:
+    401Unauthorized:
+      description: Unauthorized - missing or invalid token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "00000000-0000-0000-0000-000000000000"
+              timestamp: "2026-08-01T00:00:00Z"
+            error:
+              code: "UNAUTHORIZED"
+              message: "Missing or invalid authorization token"
+              details: {}
+
+    403RiskPolicyViolation:
+      description: Forbidden - risk policy violation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "00000000-0000-0000-0000-000000000000"
+              timestamp: "2026-08-01T00:00:00Z"
+            error:
+              code: "RISK_POLICY_VIOLATION"
+              message: "Action blocked by policy engine"
+              details: {}
+
+    404NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "00000000-0000-0000-0000-000000000000"
+              timestamp: "2026-08-01T00:00:00Z"
+            error:
+              code: "NOT_FOUND"
+              message: "Requested resource was not found"
+              details: {}
+
+    409ActionPlanChanged:
+      description: Conflict - action plan hash changed or approval expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "00000000-0000-0000-0000-000000000000"
+              timestamp: "2026-08-01T00:00:00Z"
+            error:
+              code: "ACTION_PLAN_CHANGED"
+              message: "Action plan hash changed since approval was requested"
+              details: {}
+
+    422ValidationError:
+      description: Unprocessable Entity - validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "00000000-0000-0000-0000-000000000000"
+              timestamp: "2026-08-01T00:00:00Z"
+            error:
+              code: "VALIDATION_ERROR"
+              message: "Request body failed schema validation"
+              details: {}
+
+    429RateLimited:
+      description: Too Many Requests - rate limited
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "00000000-0000-0000-0000-000000000000"
+              timestamp: "2026-08-01T00:00:00Z"
+            error:
+              code: "RATE_LIMITED"
+              message: "Rate limit exceeded"
+              details: {}
+
+    503IntegrationUnavailable:
+      description: Service Unavailable - integration down
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "00000000-0000-0000-0000-000000000000"
+              timestamp: "2026-08-01T00:00:00Z"
+            error:
+              code: "INTEGRATION_UNAVAILABLE"
+              message: "Upstream dependency is unavailable"
+              details: {}

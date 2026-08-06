@@ -29,11 +29,30 @@ build/
 .env
 .env.local
 .env.*.local
+!.env.example
 *.pem
 *.key
+*.pfx
+*.crt
+
+# Terraform
+*.tfvars
+*.tfvars.json
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Test & Debug Output
+.schemathesis/
+.hypothesis/
+*.log
 
 # IDE & OS
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+*.swp
+*.swo
+

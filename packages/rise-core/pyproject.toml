@@ -4,10 +4,21 @@ version = "0.1.0"
 description = "RISE Core shared library: models, schemas, gateway clients, audit logger"
 authors = ["RISE Team <dev@rise.local>"]
 readme = "README.md"
-packages = [{include = "rise_core", from = "src"}]
+packages = [
+    {include = "db"},
+    {include = "llm_gateway"},
+    {include = "mcp_client"},
+    {include = "schemas"},
+    {include = "knowledge_service"},
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
+sqlalchemy = "^2.0.25"
+alembic = "^1.13.1"
+psycopg2-binary = "^2.9.9"
+qdrant-client = "^1.9.0"
+sentence-transformers = "^3.0.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]

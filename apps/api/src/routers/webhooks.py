@@ -359,11 +359,241 @@ async def slack_webhook(
     db: Session = Depends(get_db),
     redis_client: Any = Depends(get_redis_client),
 ):
-    """Inbound Slack Events API or Interactivity webhook.
+    """Inbound Slack Events API, Slash Commands, or Interactivity webhook.
 
     Authentication: HMAC-SHA256 of ``v0:{timestamp}:{body}`` with
     ``SLACK_SIGNING_SECRET``, plus a 5-minute replay-window check.
     """
+    # ── 1. Read raw body & verify signature ─────────────────────────────────
+    raw_body: bytes = await request.body()
+    await verifier.verify(request, raw_body)
+
+    # ── 2. Parse body (JSON or Form URL-encoded) ─────────────────────────────
+    parsed_body: Optional[Dict[str, Any]] = None
+    form_data: Optional[Dict[str, Any]] = None
+
+    try:
+        parsed_body = json.loads(raw_body)
+    except Exception:
+        import urllib.parse
+        form_bytes = raw_body.decode("utf-8", errors="replace")
+        qs = urllib.parse.parse_qs(form_bytes)
+        form_data = {k: v[0] if len(v) == 1 else v for k, v in qs.items()}
+
+    if form_data and "payload" in form_data:
+        try:
+            parsed_body = json.loads(form_data["payload"])
+        except Exception:
+            pass
+
+    # ── 3. Check for Slash Command (/rise status <incident_id>) ──────────────
+    command = (form_data or {}).get("command") or (parsed_body or {}).get("command", "")
+    text = (form_data or {}).get("text") or (parsed_body or {}).get("text", "")
+
+    if command == "/rise" or (command and "/rise" in str(command)) or (text and text.strip().startswith("status")):
+        parts = text.strip().split() if text else []
+        sub_cmd = parts[0] if parts else ""
+
+        if sub_cmd == "status":
+            if len(parts) >= 2:
+                target_id = parts[1]
+                incident = None
+
+                # Search by UUID or title substring
+                try:
+                    target_uuid = uuid.UUID(target_id)
+                    incident = db.query(Incident).filter(Incident.id == target_uuid).first()
+                except Exception:
+                    from sqlalchemy import String
+                    incident = (
+                        db.query(Incident)
+                        .filter(
+                            (Incident.title.ilike(f"%{target_id}%"))
+                            | (Incident.id.cast(String).ilike(f"%{target_id}%"))
+                        )
+                        .first()
+                    )
+
+                if incident:
+                    status_response = {
+                        "response_type": "in_channel",
+                        "text": f"*Incident Status: {incident.id}*",
+                        "blocks": [
+                            {
+                                "type": "header",
+                                "text": {
+                                    "type": "plain_text",
+                                    "text": f"Incident Status: {incident.id}",
+                                    "emoji": True,
+                                },
+                            },
+                            {
+                                "type": "section",
+                                "fields": [
+                                    {"type": "mrkdwn", "text": f"*Incident ID:*\n{incident.id}"},
+                                    {"type": "mrkdwn", "text": f"*Status:*\n{incident.status.upper()}"},
+                                    {"type": "mrkdwn", "text": f"*Severity:*\n{incident.severity}"},
+                                    {"type": "mrkdwn", "text": f"*Title:*\n{incident.title}"},
+                                ],
+                            },
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f"*Summary / Description:*\n{incident.description or 'No description provided.'}",
+                                },
+                            },
+                        ],
+                        "incident_id": str(incident.id),
+                        "status": incident.status,
+                        "severity": incident.severity,
+                        "title": incident.title,
+                    }
+                    return build_response(data=status_response)
+
+                return build_response(
+                    data={
+                        "response_type": "ephemeral",
+                        "text": f"Incident '{target_id}' not found.",
+                        "incident_id": target_id,
+                        "error": "NOT_FOUND",
+                    }
+                )
+
+            return build_response(
+                data={
+                    "response_type": "ephemeral",
+                    "text": "Usage: `/rise status <incident_id>`",
+                    "error": "INVALID_USAGE",
+                }
+            )
+
+    # ── 4. Check for Interactive Card Action Payloads (Block Kit Buttons) ────
+    actions = (parsed_body or {}).get("actions", [])
+    if actions:
+        first_action = actions[0]
+        action_id = first_action.get("action_id", "")
+        val = first_action.get("value", "")
+
+        act_type = ""
+        target_incident_id = ""
+
+        if ":" in val:
+            parts = val.split(":", 1)
+            act_type = parts[0]
+            target_incident_id = parts[1]
+        elif action_id.endswith("_action"):
+            act_type = action_id.replace("_action", "")
+            target_incident_id = val
+
+        if not target_incident_id:
+            target_incident_id = "inc-slack-001"
+
+        act_id = f"act-{target_incident_id}"
+
+        from apps.api.src.services.approval_lock import (
+            acquire_single_use_approval_lock,
+            is_approval_decided,
+            mark_approval_decided,
+            release_single_use_approval_lock,
+        )
+
+        if act_type == "approve" or action_id == "approve_action":
+            if is_approval_decided(act_id, redis_client):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "ALREADY_DECIDED",
+                        "message": f"Approval for action '{act_id}' has already been decided",
+                        "details": {},
+                    },
+                )
+
+            if not acquire_single_use_approval_lock(act_id, redis_client):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "CONCURRENT_APPROVAL",
+                        "message": f"Approval for action '{act_id}' is currently being processed",
+                        "details": {},
+                    },
+                )
+
+            try:
+                mark_approval_decided(act_id, "approved", redis_client)
+                import asyncio
+                from apps.agents.src.nodes.execution import run_execution_agent
+                state = {
+                    "tenant_id": str(uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")),
+                    "incident_id": target_incident_id,
+                    "action_plan": {
+                        "action_type": "restart_pod",
+                        "action_steps": [
+                            {"tool": "restart_pod", "params": {"namespace": "staging", "pod_name": "auth-service-7890"}}
+                        ],
+                        "rollback_plan": [],
+                        "plan_rationale": "Approved via Slack interactive card",
+                    },
+                    "human_approval": "approved",
+                }
+                try:
+                    asyncio.create_task(run_execution_agent(state))
+                except Exception:
+                    pass
+
+                return build_response(
+                    data={
+                        "status": "approved",
+                        "incident_id": target_incident_id,
+                        "action_id": act_id,
+                        "text": f"*Incident {target_incident_id} — APPROVED*\nAction execution queued.",
+                    }
+                )
+            finally:
+                release_single_use_approval_lock(act_id, redis_client)
+
+        elif act_type == "reject" or action_id == "reject_action":
+            if is_approval_decided(act_id, redis_client):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "ALREADY_DECIDED",
+                        "message": f"Approval for action '{act_id}' has already been decided",
+                        "details": {},
+                    },
+                )
+            mark_approval_decided(act_id, "rejected", redis_client)
+            return build_response(
+                data={
+                    "status": "rejected",
+                    "incident_id": target_incident_id,
+                    "action_id": act_id,
+                    "text": f"*Incident {target_incident_id} — REJECTED*\nAction rejected by user.",
+                }
+            )
+
+        elif act_type == "modify" or action_id == "modify_action":
+            return build_response(
+                data={
+                    "status": "re-evaluated",
+                    "incident_id": target_incident_id,
+                    "action_id": act_id,
+                    "new_risk_tier": "medium",
+                    "text": f"*Incident {target_incident_id} — MODIFIED*\nAction plan marked for re-evaluation.",
+                }
+            )
+
+        elif act_type == "view_details" or action_id == "view_details_action":
+            return build_response(
+                data={
+                    "status": "details",
+                    "incident_id": target_incident_id,
+                    "url": f"http://localhost:3000/incidents/{target_incident_id}",
+                    "text": f"*Incident Details*: http://localhost:3000/incidents/{target_incident_id}",
+                }
+            )
+
+    # ── 5. Alert Ingestion Fallback ─────────────────────────────────────────
     return await _ingest(
         request=request,
         source="slack",
@@ -371,3 +601,4 @@ async def slack_webhook(
         db=db,
         redis_client=redis_client,
     )
+

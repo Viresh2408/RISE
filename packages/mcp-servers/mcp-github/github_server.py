@@ -65,6 +65,7 @@ class MCPGitHubServer:
         head_branch: str = "",
         base_branch: str = "main",
         body: str = "",
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """Create a pull request with idempotency handling on retry."""
         pr_key = f"{repo}:{head_branch}:{base_branch}"

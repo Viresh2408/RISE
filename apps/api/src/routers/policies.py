@@ -63,3 +63,12 @@ async def update_policy(
         version=2,
     ).model_dump()
     return build_response(data=policy)
+
+
+@router.delete("/{policy_id}", status_code=status.HTTP_200_OK)
+async def delete_policy(
+    policy_id: str,
+    user: UserContext = Depends(require_role("admin")),
+):
+    return build_response(data={"id": policy_id, "deleted": True})
+

@@ -48,6 +48,12 @@ build/
 .hypothesis/
 *.log
 
+# Local debug & audit output files
+audit_analysis*.txt
+debug_audit.txt
+debug_out.txt
+dec_out.txt
+
 # IDE & OS
 .DS_Store
 Thumbs.db

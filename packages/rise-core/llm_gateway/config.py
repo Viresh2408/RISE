@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 class ProviderConfig(BaseModel):
     """Config for a single provider in the failover chain."""
 
-    name: Literal["gemini", "openai", "ollama"]
+    name: Literal["groq", "gemini", "openai", "ollama"]
     model: str
     api_key: str | None = None
     base_url: str | None = None
@@ -48,12 +48,15 @@ class ProviderConfig(BaseModel):
 
 
 # Sensible public model defaults used when building config from individual env vars.
+_DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"   # fast, free-tier Groq default
 _DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 _DEFAULT_OPENAI_MODEL = "gpt-4o"
 _DEFAULT_OLLAMA_MODEL = "llama3"
 
 # Approximate public pricing (USD / token) as of mid-2025; update as needed.
 # These are used only for the usage log estimate.
+_GROQ_INPUT_COST = 0.000_000_059    # $0.059 / 1M input tokens (llama-3.3-70b)
+_GROQ_OUTPUT_COST = 0.000_000_079   # $0.079 / 1M output tokens
 _GEMINI_FLASH_INPUT_COST = 0.000_000_075   # $0.075 / 1M input tokens
 _GEMINI_FLASH_OUTPUT_COST = 0.000_000_300  # $0.300 / 1M output tokens
 _GPT4O_INPUT_COST = 0.000_002_500          # $2.500 / 1M input tokens
@@ -81,6 +84,19 @@ class GatewayConfig(BaseModel):
             return cls(providers=providers)
 
         providers: list[ProviderConfig] = []
+
+        groq_key = os.environ.get("GROQ_API_KEY", "")
+        if groq_key:
+            providers.append(
+                ProviderConfig(
+                    name="groq",
+                    model=os.environ.get("GROQ_MODEL", _DEFAULT_GROQ_MODEL),
+                    api_key=groq_key,
+                    timeout_seconds=float(os.environ.get("GROQ_TIMEOUT", "30")),
+                    cost_per_input_token=_GROQ_INPUT_COST,
+                    cost_per_output_token=_GROQ_OUTPUT_COST,
+                )
+            )
 
         gemini_key = os.environ.get("GEMINI_API_KEY", "")
         if gemini_key:

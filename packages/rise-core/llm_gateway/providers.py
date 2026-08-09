@@ -229,11 +229,76 @@ class OllamaAdapter:
 
 
 # ---------------------------------------------------------------------------
-# Factory
+# Groq adapter  (OpenAI-compatible)
 # ---------------------------------------------------------------------------
+
+_GROQ_BASE = "https://api.groq.com/openai/v1"
+
+_GROQ_SYSTEM_MSG = (
+    "You are a structured-output assistant. "
+    "Always respond with valid JSON matching the requested schema. "
+    "Do not include markdown code fences or any text outside the JSON object."
+)
+
+
+class GroqAdapter:
+    """Calls Groq Cloud via its OpenAI-compatible chat completions endpoint."""
+
+    def __init__(self, cfg: ProviderConfig) -> None:
+        if not cfg.api_key:
+            raise ValueError("GroqAdapter requires api_key")
+        self._cfg = cfg
+        self._base = cfg.base_url or _GROQ_BASE
+
+    async def complete(self, prompt: str) -> RawLLMResponse:
+        body: dict[str, Any] = {
+            "model": self._cfg.model,
+            "messages": [
+                {"role": "system", "content": _GROQ_SYSTEM_MSG},
+                {"role": "user", "content": prompt},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+        headers = {
+            "Authorization": f"Bearer {self._cfg.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
+                resp = await client.post(
+                    f"{self._base}/chat/completions",
+                    json=body,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise ProviderError(self._cfg.name, exc, timeout=True) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(self._cfg.name, exc) from exc
+
+        data = resp.json()
+        try:
+            content = data["choices"][0]["message"]["content"]
+            usage = data.get("usage", {})
+            input_tokens = int(usage.get("prompt_tokens", 0))
+            output_tokens = int(usage.get("completion_tokens", 0))
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ProviderError(
+                self._cfg.name,
+                ValueError(f"Unexpected Groq response shape: {data}"),
+            ) from exc
+
+        return RawLLMResponse(
+            content=content,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
 
 def make_adapter(cfg: ProviderConfig) -> ProviderAdapter:
     """Return the correct adapter instance for the given provider config."""
+    if cfg.name == "groq":
+        return GroqAdapter(cfg)
     if cfg.name == "gemini":
         return GeminiAdapter(cfg)
     if cfg.name == "openai":

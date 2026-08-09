@@ -1,0 +1,52 @@
+groups:
+  - name: rise_slo_alerts
+    rules:
+      - alert: RiseContextAggregationLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(rise_context_aggregation_duration_seconds_bucket[5m])) by (le)) > 90
+        for: 10m
+        labels:
+          severity: warning
+          target: rise_platform_team
+        annotations:
+          summary: "RISE context aggregation p95 latency > 90s"
+          description: "Context aggregation p95 latency is {{ $value }}s over 10m. Pages RISE platform team."
+
+      - alert: RiseQueueDepthHigh
+        expr: rise_agent_queue_depth > 50
+        for: 5m
+        labels:
+          severity: critical
+          target: rise_platform_team
+        annotations:
+          summary: "RISE agent queue depth high"
+          description: "Agent queue depth has exceeded 50 items for 5 minutes."
+
+      - alert: RiseLLMErrorRateHigh
+        expr: sum(rate(rise_llm_calls_failed_total[5m])) / sum(rate(rise_llm_calls_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          target: rise_platform_team
+        annotations:
+          summary: "RISE LLM Gateway error rate > 5%"
+          description: "LLM Gateway error rate is currently {{ $value }}."
+
+      - alert: RiseMCPServerUnhealthy
+        expr: rise_mcp_server_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          target: rise_platform_team
+        annotations:
+          summary: "MCP server {{ $labels.server_name }} is down"
+          description: "MCP server {{ $labels.server_name }} failed health check."
+
+      - alert: RiseWeeklyReportGenerationFailed
+        expr: (time() - rise_weekly_report_last_run_timestamp_seconds > 691200) or (rise_weekly_report_execution_success == 0)
+        for: 1h
+        labels:
+          severity: warning
+          target: rise_platform_team
+        annotations:
+          summary: "RISE Weekly Report Generation failed or did not run"
+          description: "generate_weekly_report.py failed to execute or has not run within 8 days (silent failure prevention)."

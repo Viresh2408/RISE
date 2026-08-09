@@ -1,0 +1,15 @@
+{
+  "langfuse": {
+    "enabled": true,
+    "environment": "production",
+    "public_key_env_var": "LANGFUSE_PUBLIC_KEY",
+    "secret_key_env_var": "LANGFUSE_SECRET_KEY",
+    "host": "https://cloud.langfuse.com",
+    "sample_rate": 1.0,
+    "flush_interval_seconds": 5,
+    "guardrails": {
+      "hallucination_detection": true,
+      "confidence_calibration_drift_threshold": 0.15
+    }
+  }
+}

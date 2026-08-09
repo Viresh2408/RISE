@@ -75,7 +75,7 @@ class DecisionEngine:
         # Extract parameters for Risk and Confidence evaluation
         confidence = float(root_cause.get("confidence", 0.0))
         action_type = action_plan.action_type
-        environment = state.get("environment", "production")
+        environment = state.get("environment") or (state.get("event_payload") or {}).get("environment") or (state.get("context") or {}).get("environment") or "production"
 
         blast_radius_services = impact_assessment.get("blast_radius_services") or state.get("blast_radius_services") or []
         blast_radius_count = len(blast_radius_services)

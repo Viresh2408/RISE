@@ -75,7 +75,22 @@ class MCPKubernetesServer:
         if tool_name not in handlers:
             raise ValueError(f"Unknown tool '{tool_name}' on mcp-kubernetes server")
 
-        return handlers[tool_name](**params)
+        clean_params = dict(params)
+        if "resource_id" in clean_params:
+            res_val = clean_params.pop("resource_id")
+            if tool_name in ("restart_pod", "get_pod_status", "get_pod_logs"):
+                clean_params.setdefault("pod_name", res_val)
+            elif tool_name in ("rollback_deployment", "scale_deployment"):
+                clean_params.setdefault("deployment_name", res_val)
+
+        if "service_id" in clean_params:
+            res_val = clean_params.pop("service_id")
+            if tool_name in ("restart_pod", "get_pod_status", "get_pod_logs"):
+                clean_params.setdefault("pod_name", res_val)
+            elif tool_name in ("rollback_deployment", "scale_deployment"):
+                clean_params.setdefault("deployment_name", res_val)
+
+        return handlers[tool_name](**clean_params)
 
     def get_pod_status(self, namespace: str = "default", pod_name: str = "") -> Dict[str, Any]:
         if self._k8s_client_available:

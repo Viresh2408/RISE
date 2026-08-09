@@ -1,0 +1,222 @@
+[
+  {
+    "id": 1,
+    "title": "payment-service high error rate — 503s spiking to 45%",
+    "service": "payment-service",
+    "environment": "staging",
+    "description": "Upstream database connection pool exhausted due to slow query in deploy v2.4.1.",
+    "ground_truth_root_cause": "database connection pool exhausted",
+    "expected_action_type": "restart_pod",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 2,
+    "title": "payment-service memory leak causing OOM restarts",
+    "service": "payment-service",
+    "environment": "production",
+    "description": "OOM kills caused by listener leak in billing middleware introduced in v2.3.0.",
+    "ground_truth_root_cause": "listener leak / memory leak in billing middleware",
+    "expected_action_type": "code_fix_pr",
+    "expected_risk_tier": "high",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 3,
+    "title": "auth-service JWT validation latency spike",
+    "service": "auth-service",
+    "environment": "staging",
+    "description": "Thundering herd issue due to concurrent expiration of Redis JWKS cache.",
+    "ground_truth_root_cause": "JWKS cache expiration thundering herd",
+    "expected_action_type": "config_update",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 4,
+    "title": "auth-service complete outage — misconfigured TLS cert",
+    "service": "auth-service",
+    "environment": "production",
+    "description": "Cert rotation missing SAN for internal cluster DNS name, causing connection errors.",
+    "ground_truth_root_cause": "missing SAN in rotated TLS certificate",
+    "expected_action_type": "code_fix_pr",
+    "expected_risk_tier": "critical",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 5,
+    "title": "notification-service queue backlog — emails delayed 2h",
+    "service": "notification-service",
+    "environment": "staging",
+    "description": "Worker count accidentally reduced from 8 to 1 during Helm chart upgrade.",
+    "ground_truth_root_cause": "notification worker count misconfiguration",
+    "expected_action_type": "scale",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 6,
+    "title": "notification-service Slack webhook rate limit exceeded",
+    "service": "notification-service",
+    "environment": "production",
+    "description": "Slack webhook rate limit hit under heavy alert storm. Needs backoff and queueing.",
+    "ground_truth_root_cause": "Slack API rate limiting under alert storm",
+    "expected_action_type": "code_fix_pr",
+    "expected_risk_tier": "medium",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 7,
+    "title": "api-gateway 502 cascade — upstream connection refused",
+    "service": "api-gateway",
+    "environment": "staging",
+    "description": "Readiness probe path mismatch in payment-service rollout left zero active pods.",
+    "ground_truth_root_cause": "readiness probe configuration mismatch",
+    "expected_action_type": "rollback",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 8,
+    "title": "api-gateway TLS 1.0 deprecation breaking legacy clients",
+    "service": "api-gateway",
+    "environment": "production",
+    "description": "Enforcing TLS 1.2+ broke legacy B2B clients using Java 7 or .NET 4.5.",
+    "ground_truth_root_cause": "TLS 1.0 deprecation breaking legacy clients",
+    "expected_action_type": "config_update",
+    "expected_risk_tier": "critical",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 9,
+    "title": "payment-service duplicate charge bug after retry storm",
+    "service": "payment-service",
+    "environment": "production",
+    "description": "Network timeout retries duplicated charges because Redis idempotency key TTL was too short (60s).",
+    "ground_truth_root_cause": "idempotency key expiry too short",
+    "expected_action_type": "code_fix_pr",
+    "expected_risk_tier": "high",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 10,
+    "title": "auth-service token refresh race condition causing logout loops",
+    "service": "auth-service",
+    "environment": "production",
+    "description": "Mobile client concurrent refresh requests raced, leading to invalid refresh tokens.",
+    "ground_truth_root_cause": "token refresh race condition causing invalidation",
+    "expected_action_type": "code_fix_pr",
+    "expected_risk_tier": "high",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 11,
+    "title": "search-service CPU spike — regex denial of service",
+    "service": "search-service",
+    "environment": "staging",
+    "description": "Catastrophic backtracking in search query regex parser causing CPU throttling.",
+    "ground_truth_root_cause": "regex denial of service in query parser",
+    "expected_action_type": "restart_pod",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 12,
+    "title": "inventory-service database deadlock during flash sale",
+    "service": "inventory-service",
+    "environment": "production",
+    "description": "Un-ordered row locking in inventory update transaction causing Postgres deadlocks.",
+    "ground_truth_root_cause": "un-ordered row locking in inventory transaction",
+    "expected_action_type": "code_fix_pr",
+    "expected_risk_tier": "critical",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 13,
+    "title": "billing-service third-party gateway timeout surge",
+    "service": "billing-service",
+    "environment": "staging",
+    "description": "Stripe API HTTP connection timeout without fallback circuit breaker.",
+    "ground_truth_root_cause": "Stripe API connection timeout without fallback",
+    "expected_action_type": "config_update",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 14,
+    "title": "order-service Kafka consumer lag growing exponentially",
+    "service": "order-service",
+    "environment": "staging",
+    "description": "Poison pill message format in order-events topic causing consumer infinite retry loop.",
+    "ground_truth_root_cause": "poison pill message causing consumer retry loop",
+    "expected_action_type": "restart_pod",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 15,
+    "title": "recommendation-service Redis memory fragmentation alert",
+    "service": "recommendation-service",
+    "environment": "staging",
+    "description": "Eviction policy set to noeviction under peak cache load causing OOM errors.",
+    "ground_truth_root_cause": "Redis eviction policy set to noeviction",
+    "expected_action_type": "config_update",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 16,
+    "title": "user-service DNS resolution failure in K8s",
+    "service": "user-service",
+    "environment": "production",
+    "description": "CoreDNS pod eviction causing intermittent DNS lookup timeouts across cluster.",
+    "ground_truth_root_cause": "CoreDNS pod eviction causing DNS lookup timeouts",
+    "expected_action_type": "scale",
+    "expected_risk_tier": "high",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 17,
+    "title": "metrics-service disk full alert — Prometheus WAL",
+    "service": "metrics-service",
+    "environment": "staging",
+    "description": "Prometheus WAL directory disk usage reached 98% due to un-truncated metrics retention.",
+    "ground_truth_root_cause": "Prometheus WAL disk retention capacity exceeded",
+    "expected_action_type": "config_update",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 18,
+    "title": "content-service CDN cache invalidation failure",
+    "service": "content-service",
+    "environment": "production",
+    "description": "Stale S3 bucket policy blocking CloudFront edge cache purges.",
+    "ground_truth_root_cause": "S3 bucket policy blocking CloudFront purges",
+    "expected_action_type": "code_fix_pr",
+    "expected_risk_tier": "high",
+    "expected_decision": "requires_approval"
+  },
+  {
+    "id": 19,
+    "title": "ingress-controller 413 Payload Too Large errors",
+    "service": "ingress-controller",
+    "environment": "staging",
+    "description": "Nginx client_max_body_size default 1MB exceeded by file uploads.",
+    "ground_truth_root_cause": "Nginx client_max_body_size limit exceeded",
+    "expected_action_type": "config_update",
+    "expected_risk_tier": "low",
+    "expected_decision": "auto_approve"
+  },
+  {
+    "id": 20,
+    "title": "analytics-service schema migration deadlock",
+    "service": "analytics-service",
+    "environment": "production",
+    "description": "Exclusive table lock acquired during high traffic window by unindexed DDL migration.",
+    "ground_truth_root_cause": "exclusive DDL table lock during high traffic window",
+    "expected_action_type": "code_fix_pr",
+    "expected_risk_tier": "critical",
+    "expected_decision": "requires_approval"
+  }
+]

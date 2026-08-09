@@ -48,6 +48,16 @@ class RiskEngine:
         self.opa_base_url = opa_base_url.rstrip("/")
         self.timeout = timeout
 
+    @staticmethod
+    def is_shadow_mode_active(active_policies: Optional[List[Dict[str, Any]]] = None) -> bool:
+        """Read-only derived indicator: shadow mode is active when no policy in production permits auto-approval."""
+        if not active_policies:
+            return True
+        return not any(
+            p.get("environment") == "production" and not p.get("requires_approval", True)
+            for p in active_policies
+        )
+
     async def evaluate_risk(
         self,
         action_type: str,
@@ -57,6 +67,7 @@ class RiskEngine:
         min_confidence: float = 0.70,
         max_blast_radius: int = 2,
         service_criticality: str = "normal",
+        active_policies: Optional[List[Dict[str, Any]]] = None,
         opa_client: Optional[httpx.AsyncClient] = None,
     ) -> RiskEvaluation:
         """Evaluate risk and approval requirements via OPA policy engine or fallback.
@@ -75,6 +86,7 @@ class RiskEngine:
                 "min_confidence": min_confidence,
                 "max_blast_radius": max_blast_radius,
                 "service_criticality": service_criticality,
+                "policies": active_policies or [],
             }
         }
 
@@ -153,12 +165,13 @@ class RiskEngine:
         min_confidence: float = 0.70,
         max_blast_radius: int = 2,
         service_criticality: str = "normal",
+        active_policies: Optional[List[Dict[str, Any]]] = None,
     ) -> RiskEvaluation:
         """Local pure-Python fallback evaluation matching OPA Rego rules when OPA service is not running in local test environment."""
         critical_actions = {"delete_database", "drop_table", "force_destroy", "code_fix_pr", "destroy_cluster"}
         high_actions = {"rollback_deployment", "failover_database", "modify_traffic", "scale_deployment"}
-        medium_actions = {"restart_service", "clear_cache", "flush_redis", "restart_pod"}
-        low_actions = {"restart_pod", "clear_cache", "flush_redis", "scale_deployment"}
+        medium_actions = {"restart_service", "clear_cache", "flush_redis", "restart_pod", "config_update", "scale", "rollback"}
+        low_actions = {"restart_pod", "clear_cache", "flush_redis", "scale_deployment", "config_update", "scale", "rollback"}
 
         is_critical = (
             action_type in critical_actions
@@ -198,14 +211,35 @@ class RiskEngine:
         reasons = []
         requires_approval = True
 
-        if risk_tier == "low" and confidence >= min_confidence and blast_radius_count <= max_blast_radius:
-            requires_approval = False
-        elif risk_tier == "medium" and environment != "production" and confidence >= min_confidence and blast_radius_count <= max_blast_radius:
-            requires_approval = False
+        has_matching_prod_auto_approval_policy = False
+        if active_policies:
+            for pol in active_policies:
+                pol_action = pol.get("action_pattern") or pol.get("action_type")
+                pol_env = pol.get("environment")
+                pol_req_appr = pol.get("requires_approval", True)
+                pol_max_blast = pol.get("max_blast_radius", max_blast_radius)
+                if pol_action == action_type and pol_env == "production" and not pol_req_appr:
+                    if blast_radius_count <= pol_max_blast:
+                        has_matching_prod_auto_approval_policy = True
+                        break
+
+        if environment != "production":
+            if risk_tier == "low" and confidence >= min_confidence and blast_radius_count <= max_blast_radius:
+                requires_approval = False
+            elif risk_tier == "medium" and confidence >= min_confidence and blast_radius_count <= max_blast_radius:
+                requires_approval = False
+        else:
+            if has_matching_prod_auto_approval_policy and risk_tier not in ("critical", "high") and confidence >= min_confidence and blast_radius_count <= max_blast_radius:
+                requires_approval = False
+            else:
+                requires_approval = True
+                if not has_matching_prod_auto_approval_policy:
+                    reasons.append("Production auto-remediation locked in shadow mode — no active policy permits auto-approval for this action type")
 
         if risk_tier == "critical":
             requires_approval = True
-            reasons.append("Risk tier is critical - mandatory human approval required")
+            if "Risk tier is critical - mandatory human approval required" not in reasons:
+                reasons.append("Risk tier is critical - mandatory human approval required")
 
         if confidence < min_confidence:
             requires_approval = True
@@ -217,11 +251,13 @@ class RiskEngine:
 
         if environment == "production" and risk_tier == "high":
             requires_approval = True
-            reasons.append("High-risk action in production requires human approval")
+            if "High-risk action in production requires human approval" not in reasons:
+                reasons.append("High-risk action in production requires human approval")
 
         if action_type == "code_fix_pr":
             requires_approval = True
-            reasons.append("Code fix PR requires mandatory human merge review")
+            if "Code fix PR requires mandatory human merge review" not in reasons:
+                reasons.append("Code fix PR requires mandatory human merge review")
 
         return RiskEvaluation(
             risk_tier=risk_tier,

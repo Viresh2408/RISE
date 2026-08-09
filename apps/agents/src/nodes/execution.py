@@ -40,7 +40,7 @@ async def run_execution_agent(
     """Execute the Execution Agent node logic."""
     new_state = dict(state)
 
-    raw_plan = state.get("action_plan")
+    raw_plan = state.get("action_plan") or (state.get("decision") or {}).get("action_plan")
     if not raw_plan:
         err_msg = "No action_plan present in state for Execution Agent"
         logger.error(err_msg)

@@ -164,7 +164,27 @@ def run_node_with_retry_and_timeout(
 
 def node_ingest(state: AgentState) -> AgentState:
     res = dict(state)
-    res["event_payload"] = res.get("event_payload") or {}
+    payload = dict(res.get("event_payload") or {})
+    summary = str(payload.get("summary", "")).lower()
+    raw_text = str(payload.get("raw_payload", payload)).lower()
+
+    sanitization_flags = list(payload.get("sanitization_flags") or [])
+
+    injection_patterns = [
+        "ignore previous instructions", "system instruction", "override risk",
+        "auto_approve=true", "rm -rf", "curl ", "wget ", "sk_live_", "akia",
+        "bearer ", "health check override", "human approved this action",
+        "topology override", "include all database passwords", "disable rollback",
+        "rca report:", "approve all pending actions", "skip risk assessment",
+        "dump all env", "postgres_pass_", "force auto-approval"
+    ]
+
+    if any(pat in summary or pat in raw_text for pat in injection_patterns):
+        if "prompt_injection_detected" not in sanitization_flags:
+            sanitization_flags.append("prompt_injection_detected")
+
+    payload["sanitization_flags"] = sanitization_flags
+    res["event_payload"] = payload
     return res
 
 
@@ -243,9 +263,29 @@ def node_decide(state: AgentState) -> AgentState:
 
 
 def node_await_human(state: AgentState) -> AgentState:
+    from apps.agents.src.services.slack_card import format_slack_approval_card, send_slack_approval_card
+
     res = dict(state)
     if not res.get("await_human_reason"):
         res["await_human_reason"] = "approval_required"
+
+    # Render Slack approval card per prompts.md §9
+    card = format_slack_approval_card(res)
+    res["slack_card"] = card
+    send_slack_approval_card(res, res.get("tenant_id", "default-tenant"))
+
+    # If interrupt requested and no decision submitted yet, call LangGraph interrupt
+    if res.get("use_interrupt") and not res.get("human_approval"):
+        try:
+            from langgraph.types import interrupt
+            resume_val = interrupt({"reason": "approval_required", "slack_card": card})
+            if isinstance(resume_val, str):
+                res["human_approval"] = resume_val
+            elif isinstance(resume_val, dict):
+                res.update(resume_val)
+        except ImportError:
+            pass
+
     return res
 
 
@@ -263,17 +303,61 @@ def node_execute(state: AgentState) -> AgentState:
             loop.close()
 
 
-
 def node_verify(state: AgentState) -> AgentState:
-    res = dict(state)
-    if "verification_result" not in res or not res["verification_result"]:
-        res["verification_result"] = {"status": "pass"}
-    return res
+    from apps.agents.src.nodes.verification import run_verification_agent
+
+    try:
+        return asyncio.run(run_verification_agent(dict(state)))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(run_verification_agent(dict(state)))
+        finally:
+            loop.close()
 
 
 def node_rollback(state: AgentState) -> AgentState:
+    from apps.agents.src.nodes.execution import run_execution_agent
+
     res = dict(state)
+    rollback_count = res.get("rollback_count", 0) + 1
+    res["rollback_count"] = rollback_count
+
+    MAX_ROLLBACK_CYCLES = 2  # Circuit breaker threshold per agents-and-orchestration.md §7
+
+    if rollback_count >= MAX_ROLLBACK_CYCLES:
+        logger.warning(
+            "Circuit breaker triggered for incident %s: max rollback cycles (%d) reached.",
+            res.get("incident_id"),
+            rollback_count,
+        )
+        res["status"] = "manual_handoff"
+        res["should_escalate"] = True
+        res["error"] = f"Circuit breaker triggered: Max rollback cycles ({MAX_ROLLBACK_CYCLES}) reached."
+        return res
+
+    action_plan = res.get("action_plan") or {}
+    rollback_steps = action_plan.get("rollback_plan") or []
+
+    if rollback_steps:
+        rollback_action_plan = {
+            "action_type": "rollback",
+            "action_steps": rollback_steps,
+            "rollback_plan": [],
+            "plan_rationale": "Auto-rollback triggered on verification failure",
+        }
+        rollback_state = dict(res)
+        rollback_state["action_plan"] = rollback_action_plan
+        rollback_state["approved_plan_hash"] = None
+        try:
+            exec_res = asyncio.run(run_execution_agent(rollback_state))
+            res["rollback_execution_log"] = exec_res.get("execution_log")
+        except Exception as exc:
+            logger.error("Auto-rollback execution failed: %s", exc)
+
     res["await_human_reason"] = "rollback_complete"
+    res["human_approval"] = ""  # Reset approval for re-escalation
     return res
 
 
@@ -311,7 +395,10 @@ def route_after_decide(state: AgentState) -> str:
     if state.get("should_escalate"):
         return "escalate"
     dec = state.get("decision") or {}
-    if dec.get("requires_approval") or dec.get("status") == "needs_approval":
+    requires_approval = dec.get("requires_approval")
+    if requires_approval is None:
+        requires_approval = state.get("requires_approval")
+    if requires_approval or dec.get("status") == "needs_approval":
         return "await_human"
     return "execute"
 
@@ -331,9 +418,17 @@ def route_after_verify(state: AgentState) -> str:
     if state.get("should_escalate"):
         return "escalate"
     ver = state.get("verification_result") or {}
-    if ver.get("status") == "pass":
+    status = ver.get("status")
+    rec = ver.get("recommendation")
+    if status in ("passed", "pass") and rec != "rollback":
         return "close"
     return "rollback"
+
+
+def route_after_rollback(state: AgentState) -> str:
+    if state.get("should_escalate") or state.get("status") == "manual_handoff" or state.get("rollback_count", 0) >= 2:
+        return "manual_handoff"
+    return "await_human"
 
 
 # --- Graph Construction ---
@@ -370,7 +465,7 @@ def create_orchestrator_graph(checkpointer: Any = None) -> Any:
 
     builder.add_conditional_edges("execute", _make_guard("verify"), {"verify": "verify", "escalate": "escalate"})
     builder.add_conditional_edges("verify", route_after_verify, {"close": "close", "rollback": "rollback", "escalate": "escalate"})
-    builder.add_conditional_edges("rollback", _make_guard("await_human"), {"await_human": "await_human", "escalate": "escalate"})
+    builder.add_conditional_edges("rollback", route_after_rollback, {"await_human": "await_human", "manual_handoff": "manual_handoff", "escalate": "escalate"})
 
     builder.add_edge("close", END)
     builder.add_edge("manual_handoff", END)

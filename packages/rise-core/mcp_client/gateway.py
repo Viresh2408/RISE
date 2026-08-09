@@ -19,8 +19,8 @@ import sys
 from pathlib import Path
 
 # Add mcp-servers directory paths to sys.path for clean out-of-process/module imports
-_ROOT_DIR = Path(__file__).resolve().parents[2]
-for _server_dir in ["mcp-kubernetes", "mcp-aws", "mcp-github"]:
+_ROOT_DIR = Path(__file__).resolve().parents[3]
+for _server_dir in ["mcp-kubernetes", "mcp-aws", "mcp-github", "mcp-slack"]:
     _p = str(_ROOT_DIR / "packages" / "mcp-servers" / _server_dir)
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -28,17 +28,34 @@ for _server_dir in ["mcp-kubernetes", "mcp-aws", "mcp-github"]:
 try:
     from kubernetes_server import MCPKubernetesServer
 except ImportError:
-    from packages.mcp_servers.mcp_kubernetes.kubernetes_server import MCPKubernetesServer  # type: ignore
+    try:
+        from packages.mcp_servers.mcp_kubernetes.kubernetes_server import MCPKubernetesServer  # type: ignore
+    except ImportError:
+        MCPKubernetesServer = None  # type: ignore
 
 try:
     from aws_server import MCPAWSServer
 except ImportError:
-    from packages.mcp_servers.mcp_aws.aws_server import MCPAWSServer  # type: ignore
+    try:
+        from packages.mcp_servers.mcp_aws.aws_server import MCPAWSServer  # type: ignore
+    except ImportError:
+        MCPAWSServer = None  # type: ignore
 
 try:
     from github_server import MCPGitHubServer
 except ImportError:
-    from packages.mcp_servers.mcp_github.github_server import MCPGitHubServer  # type: ignore
+    try:
+        from packages.mcp_servers.mcp_github.github_server import MCPGitHubServer  # type: ignore
+    except ImportError:
+        MCPGitHubServer = None  # type: ignore
+
+try:
+    from slack_server import MCPSlackServer
+except ImportError:
+    try:
+        from packages.mcp_servers.mcp_slack.slack_server import MCPSlackServer  # type: ignore
+    except ImportError:
+        MCPSlackServer = None  # type: ignore
 
 from schemas.agent_state import ActionPlan, ActionStep
 
@@ -69,14 +86,16 @@ class MCPGateway:
         k8s_server: Optional[MCPKubernetesServer] = None,
         aws_server: Optional[MCPAWSServer] = None,
         github_server: Optional[MCPGitHubServer] = None,
+        slack_server: Optional[MCPSlackServer] = None,
     ):
         self.default_timeout_seconds = default_timeout_seconds
         self.opa_client = opa_client
 
         # Isolated MCP Server instances
-        self.k8s_server = k8s_server or MCPKubernetesServer()
-        self.aws_server = aws_server or MCPAWSServer()
-        self.github_server = github_server or MCPGitHubServer()
+        self.k8s_server = k8s_server or (MCPKubernetesServer() if MCPKubernetesServer else None)
+        self.aws_server = aws_server or (MCPAWSServer() if MCPAWSServer else None)
+        self.github_server = github_server or (MCPGitHubServer() if MCPGitHubServer else None)
+        self.slack_server = slack_server or (MCPSlackServer() if MCPSlackServer else None)
 
     def evaluate_opa_allowlist(
         self,
@@ -96,7 +115,14 @@ class MCPGateway:
             "update_ssm_parameter",
             "create_branch",
             "create_pr",
+            "code_fix_pr",
+            "config_update",
+            "scale",
+            "rollback",
             "run_workflow",
+            "post_message",
+            "post_interactive_approval",
+            "update_message",
         }
         read_tools = {
             "get_pod_status",
@@ -113,12 +139,13 @@ class MCPGateway:
             "query_alertmanager",
             "search_similar_incidents",
             "search_runbooks",
+            "read_thread",
         }
 
         if environment == "unauthorized":
             return False
 
-        if agent_identity == "execution-agent":
+        if agent_identity in ("execution-agent", "orchestrator-agent", "notification-service"):
             return tool_name in write_tools or tool_name in read_tools
         elif agent_identity in ("context-builder-agent", "investigation-agent"):
             return tool_name in read_tools
@@ -264,12 +291,19 @@ class MCPGateway:
         # 3. Dispatch to server with per-tool timeout
         try:
             async def _execute():
-                if tool_name in ("get_pod_status", "get_pod_logs", "restart_pod", "rollback_deployment", "scale_deployment", "get_events"):
-                    return self.k8s_server.handle_tool_call(tool_name, params)
+                if tool_name in ("get_pod_status", "get_pod_logs", "restart_pod", "rollback_deployment", "scale_deployment", "scale", "rollback", "config_update", "get_events"):
+                    eff_tool = "restart_pod" if tool_name in ("config_update",) else ("scale_deployment" if tool_name == "scale" else ("rollback_deployment" if tool_name == "rollback" else tool_name))
+                    return self.k8s_server.handle_tool_call(eff_tool, params)
                 elif tool_name in ("get_cloudwatch_alarms", "get_cloudwatch_logs", "restart_ec2_instance", "invoke_lambda", "update_ssm_parameter", "get_iam_context"):
                     return self.aws_server.handle_tool_call(tool_name, params)
-                elif tool_name in ("get_recent_commits", "get_pr_diff", "create_branch", "create_pr", "run_workflow", "get_workflow_status"):
-                    return self.github_server.handle_tool_call(tool_name, params)
+                elif tool_name in ("get_recent_commits", "get_pr_diff", "create_branch", "create_pr", "code_fix_pr", "run_workflow", "get_workflow_status"):
+                    eff_tool = "create_pr" if tool_name == "code_fix_pr" else tool_name
+                    return self.github_server.handle_tool_call(eff_tool, params)
+                elif tool_name in ("post_message", "post_interactive_approval", "read_thread", "update_message"):
+                    if self.slack_server is None:
+                        from slack_server import MCPSlackServer
+                        self.slack_server = MCPSlackServer()
+                    return self.slack_server.handle_tool_call(tool_name, params)
                 else:
                     raise ValueError(f"No registered server for tool '{tool_name}'")
 

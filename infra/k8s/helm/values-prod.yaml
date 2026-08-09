@@ -1,0 +1,34 @@
+# Production Helm Values Overlay
+environment: production
+
+replicaCount: 5
+
+canary:
+  enabled: true
+  weight: 10
+  soakPeriodMinutes: 30
+  autoPromote: true
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2048Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 75
+
+secrets:
+  externalSecretsOperator:
+    enabled: true
+    secretStore: aws-secrets-manager
+    refreshInterval: 1h
+
+monitoring:
+  enabled: true
+  prometheusServiceMonitor: true

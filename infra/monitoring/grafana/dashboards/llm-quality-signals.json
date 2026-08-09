@@ -1,0 +1,38 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "id": null,
+  "panels": [
+    {
+      "title": "Confidence Calibration Drift",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "rise_confidence_calibration_score", "legendFormat": "Confidence Accuracy Delta" }
+      ]
+    },
+    {
+      "title": "Guardrail Hallucination Flags",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(rise_guardrail_hallucinations_total[1h]))", "legendFormat": "Hallucination Flags" }
+      ]
+    },
+    {
+      "title": "Per-Prompt-Version Eval Scores Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "rise_prompt_version_eval_score", "legendFormat": "Prompt {{prompt_version}}" }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["rise", "langfuse", "llm-quality"],
+  "title": "RISE LLM Quality & Calibration Signals",
+  "uid": "rise-llm-quality",
+  "version": 1
+}

@@ -1,0 +1,67 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "API Latency (p50, p95, p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95 Latency" }
+      ]
+    },
+    {
+      "title": "API Error Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m]))", "legendFormat": "Error Rate" }
+      ]
+    },
+    {
+      "title": "Agent Pipeline Stage Duration per Stage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "rise_agent_stage_duration_seconds", "legendFormat": "{{stage}}" }
+      ]
+    },
+    {
+      "title": "Auto-Remediation vs Human Approval Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "rise_remediation_actions_total", "legendFormat": "{{execution_type}}" }
+      ]
+    },
+    {
+      "title": "LLM Token Usage & Estimated Cost",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "sum(rate(rise_llm_tokens_total[1h])) by (provider, model)", "legendFormat": "{{provider}} - {{model}}" }
+      ]
+    },
+    {
+      "title": "Queue Depth & MCP Server Health",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "rise_agent_queue_depth", "legendFormat": "Queue Depth" },
+        { "expr": "rise_mcp_server_up", "legendFormat": "MCP {{server_name}} Up" }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["rise", "production", "monitoring"],
+  "title": "RISE Production Overview",
+  "uid": "rise-prod-overview",
+  "version": 1
+}

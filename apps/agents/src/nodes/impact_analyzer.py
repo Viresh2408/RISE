@@ -140,7 +140,7 @@ def resolve_blast_radius_services(
             logger.warning("Failed to compute deterministic blast_radius: %s", exc)
             return [], True
 
-    return [], topology_missing
+    return ([service_id] if service_id else []), True
 
 
 async def run_impact_analyzer_agent(

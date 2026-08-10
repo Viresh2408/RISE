@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import { ActionPlanDTO, RemediationActionDTO, RiskTier } from '../lib/types';
 import { apiClient, ApiError } from '../lib/api-client';
 import { useAuth } from '../lib/auth-context';
-import { CheckCircle2, XCircle, Edit3, AlertTriangle, ShieldAlert, ArrowRight } from 'lucide-react';
+import { CheckCircle2, XCircle, Edit3, AlertTriangle, ShieldAlert, ArrowRight, X } from 'lucide-react';
+import { tx } from '../lib/typography';
 
 interface ActionControlsProps {
   incidentId: string;
@@ -16,6 +17,7 @@ interface ActionControlsProps {
 export function ActionControls({ incidentId, action, recommendedPlan, onRefresh }: ActionControlsProps) {
   const { session, hasRole } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [successAnim, setSuccessAnim] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
   // Reject Modal State
@@ -38,7 +40,11 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
 
     try {
       await apiClient.approveAction(session.token, incidentId, action.id, note);
-      onRefresh();
+      setSuccessAnim('approved');
+      setTimeout(() => {
+        setSuccessAnim(null);
+        onRefresh();
+      }, 400);
     } catch (err: any) {
       if (err instanceof ApiError && (err.code === 'ACTION_PLAN_CHANGED' || err.status === 409)) {
         setErrorBanner(
@@ -60,8 +66,12 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
 
     try {
       await apiClient.rejectAction(session.token, incidentId, action.id, rejectReason.trim());
-      setShowRejectModal(false);
-      onRefresh();
+      setSuccessAnim('rejected');
+      setTimeout(() => {
+        setSuccessAnim(null);
+        setShowRejectModal(false);
+        onRefresh();
+      }, 400);
     } catch (err: any) {
       setErrorBanner(err.message || 'Failed to reject action');
     } finally {
@@ -89,7 +99,7 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
       });
 
       setReevaluatedRiskTier(res.new_risk_tier);
-      setModifyStep(2); // Advance to Step 2 Review & Approve
+      setModifyStep(2);
     } catch (err: any) {
       setErrorBanner(err.message || 'Failed to re-evaluate modified plan');
     } finally {
@@ -101,8 +111,15 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
   const handleModifyStep2Approve = async () => {
     if (!session?.token) return;
     setLoading(true);
+    setErrorBanner(null);
+
     try {
-      await apiClient.approveAction(session.token, incidentId, action.id, `Approved modified plan with risk tier: ${reevaluatedRiskTier}`);
+      await apiClient.approveAction(
+        session.token,
+        incidentId,
+        action.id,
+        `Approved modified plan (Re-evaluated Risk Tier: ${reevaluatedRiskTier})`
+      );
       setShowModifyModal(false);
       setModifyStep(1);
       onRefresh();
@@ -113,113 +130,117 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
     }
   };
 
+  if (action.status !== 'pending_approval') {
+    return (
+      <div className="rounded-xl border border-[#E8E2D9]/15 bg-[#151121] p-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={tx('cardMeta', 'text-[#6B6560]')}>Status:</span>
+          <span
+            className={`font-semibold capitalize text-xs px-2.5 py-0.5 rounded ${
+              action.status === 'approved' || action.status === 'executed'
+                ? 'bg-[#22C55E]/15 text-[#22C55E]'
+                : action.status === 'rejected'
+                ? 'bg-[#EF4444]/15 text-[#EF4444]'
+                : 'bg-[#F59E0B]/15 text-[#F59E0B]'
+            }`}
+          >
+            {action.status}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {/* HTTP 409 ACTION_PLAN_CHANGED Alert Banner */}
       {errorBanner && (
-        <div className="flex items-start space-x-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-amber-300">
-          <ShieldAlert className="h-5 w-5 flex-shrink-0 text-amber-400 mt-0.5" />
-          <div className="flex-1 text-xs">
-            <h4 className="font-bold text-amber-200">Action Plan Warning</h4>
-            <p>{errorBanner}</p>
-          </div>
-          <button onClick={() => setErrorBanner(null)} className="text-xs text-amber-400 hover:underline">
-            Dismiss
-          </button>
+        <div className="flex items-center gap-2.5 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3.5 text-xs text-[#EF4444]">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          <span>{errorBanner}</span>
         </div>
       )}
 
-      {/* Decision Buttons Container */}
-      <div className="flex items-center space-x-3 flex-wrap gap-y-2">
-        {action.status === 'pending_approval' && (
-          <>
-            <button
-              disabled={loading || !canApprove}
-              onClick={() => handleApprove('Approved via RISE Dashboard')}
-              className="flex items-center space-x-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 transition-all shadow-md shadow-emerald-950/50"
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              <span>Approve Action</span>
-            </button>
+      {/* Button Row: Approve | Reject | Modify with minimum 16px gaps, mobile vertical stack */}
+      <div
+        data-testid="action-btn-row"
+        className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 pt-2"
+      >
+        <button
+          onClick={() => handleApprove()}
+          disabled={loading || !canApprove}
+          className={`flex-1 flex items-center justify-center gap-2 rounded-lg bg-[#22C55E] hover:bg-[#22C55E]/90 px-5 py-3 text-xs font-semibold text-[#0E0B14] disabled:opacity-50 transition-all duration-200 shadow-md ${
+            successAnim === 'approved' ? 'scale-95 opacity-80' : ''
+          }`}
+        >
+          <CheckCircle2 className="h-4 w-4" />
+          <span>{loading ? 'Processing...' : 'Approve Action'}</span>
+        </button>
 
-            <button
-              disabled={loading || !canApprove}
-              onClick={() => {
-                setShowModifyModal(true);
-                setModifyStep(1);
-              }}
-              className="flex items-center space-x-2 rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20 disabled:opacity-50 transition-all"
-            >
-              <Edit3 className="h-4 w-4" />
-              <span>Modify Plan</span>
-            </button>
+        <button
+          onClick={() => setShowRejectModal(true)}
+          disabled={loading || !canApprove}
+          className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-[#EF4444]/40 bg-[#EF4444]/10 hover:bg-[#EF4444]/20 px-5 py-3 text-xs font-semibold text-[#EF4444] disabled:opacity-50 transition-all duration-200"
+        >
+          <XCircle className="h-4 w-4" />
+          <span>Reject</span>
+        </button>
 
-            <button
-              disabled={loading || !canApprove}
-              onClick={() => setShowRejectModal(true)}
-              className="flex items-center space-x-2 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/20 disabled:opacity-50 transition-all"
-            >
-              <XCircle className="h-4 w-4" />
-              <span>Reject Action</span>
-            </button>
-          </>
-        )}
-
-        {action.status === 'approved' && (
-          <div className="flex items-center space-x-2 text-xs font-semibold text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/30">
-            <CheckCircle2 className="h-4 w-4" />
-            <span>Action Approved — Graph Resumed & Execution Queued</span>
-          </div>
-        )}
-
-        {action.status === 'rejected' && (
-          <div className="flex items-center space-x-2 text-xs font-semibold text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg border border-red-500/30">
-            <XCircle className="h-4 w-4" />
-            <span>Action Rejected</span>
-          </div>
-        )}
-
-        {!canApprove && action.status === 'pending_approval' && (
-          <p className="text-xs text-amber-400 italic">
-            * 'approver' or 'admin' role required to take decision actions.
-          </p>
-        )}
+        <button
+          onClick={() => setShowModifyModal(true)}
+          disabled={loading || !canApprove}
+          className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 px-5 py-3 text-xs font-semibold text-[#8B5CF6] disabled:opacity-50 transition-all duration-200"
+        >
+          <Edit3 className="h-4 w-4" />
+          <span>Modify Plan</span>
+        </button>
       </div>
+
+      {!canApprove && (
+        <p className={tx('cardMeta', 'text-[#6B6560] text-center')}>
+          Approver role required to approve, reject, or modify actions.
+        </p>
+      )}
 
       {/* Reject Modal */}
       {showRejectModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-xl border border-[#232d3f] bg-[#121824] p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center space-x-2 text-red-400">
-              <AlertTriangle className="h-5 w-5" />
-              <h3 className="text-base font-bold text-white">Reject Action Plan</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-[#E8E2D9]/20 bg-[#151121] p-6 shadow-2xl space-y-6">
+            <div className="flex items-center justify-between border-b border-[#E8E2D9]/10 pb-4">
+              <h3 className={tx('sectionHeader', 'text-[#FAF7F2] normal-case text-lg font-semibold')}>
+                Reject Remediation Action
+              </h3>
+              <button onClick={() => setShowRejectModal(false)} className="text-[#6B6560] hover:text-[#FAF7F2]">
+                <X className="h-5 w-5" />
+              </button>
             </div>
-            <p className="text-xs text-gray-400">
-              Provide an explicit rejection reason for the audit trail.
-            </p>
+
             <form onSubmit={handleRejectSubmit} className="space-y-4">
-              <textarea
-                required
-                rows={3}
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="e.g. Risk too high during peak traffic window"
-                className="w-full rounded-lg border border-gray-800 bg-[#0a0d14] p-3 text-xs text-gray-200 focus:border-red-500 focus:outline-none"
-              />
-              <div className="flex justify-end space-x-3">
+              <div className="space-y-1.5">
+                <label className={tx('formLabel', 'text-[#6B6560]')}>Rejection Reason (Required)</label>
+                <textarea
+                  required
+                  rows={3}
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="Provide reason for rejecting this action..."
+                  className="w-full rounded-lg border border-[#E8E2D9]/15 bg-[#0E0B14] px-3.5 py-2 text-sm text-[#FAF7F2] focus:border-[#EF4444] focus:outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]/10">
                 <button
                   type="button"
                   onClick={() => setShowRejectModal(false)}
-                  className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2 text-xs text-gray-300 hover:bg-gray-800"
+                  className="rounded-lg border border-[#E8E2D9]/15 px-4 py-2 text-xs font-semibold text-[#E8E2D9] hover:bg-[#E8E2D9]/5"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={loading || !rejectReason.trim()}
-                  className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+                  className="rounded-lg bg-[#EF4444] px-5 py-2 text-xs font-semibold text-[#FAF7F2] hover:bg-[#EF4444]/90 disabled:opacity-50"
                 >
-                  Submit Rejection
+                  {loading ? 'Rejecting...' : 'Confirm Rejection'}
                 </button>
               </div>
             </form>
@@ -227,119 +248,101 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
         </div>
       )}
 
-      {/* Two-Step Modify Modal */}
+      {/* Modify Wizard Modal */}
       {showModifyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-xl border border-[#232d3f] bg-[#121824] p-6 space-y-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-              <div className="flex items-center space-x-2 text-blue-400">
-                <Edit3 className="h-5 w-5" />
-                <h3 className="text-base font-bold text-white">
-                  Modify Action Plan — Step {modifyStep} of 2
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-[#E8E2D9]/20 bg-[#151121] p-6 shadow-2xl space-y-6">
+            <div className="flex items-center justify-between border-b border-[#E8E2D9]/10 pb-4">
+              <div>
+                <h3 className={tx('sectionHeader', 'text-[#FAF7F2] normal-case text-lg font-semibold')}>
+                  Modify Plan & Re-evaluate Risk
                 </h3>
+                <span className={tx('cardMeta', 'text-[#6B6560]')}>Step {modifyStep} of 2</span>
               </div>
-              <span className="text-xs text-gray-500">
-                {modifyStep === 1 ? 'Edit Parameters' : 'Re-evaluated Review'}
-              </span>
+              <button
+                onClick={() => {
+                  setShowModifyModal(false);
+                  setModifyStep(1);
+                }}
+                className="text-[#6B6560] hover:text-[#FAF7F2]"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
 
             {modifyStep === 1 ? (
-              // Step 1: Submit Modification
               <form onSubmit={handleModifyStep1Submit} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Plan Rationale & Description
-                  </label>
+                <div className="space-y-1.5">
+                  <label className={tx('formLabel', 'text-[#6B6560]')}>Plan Description</label>
                   <input
                     type="text"
                     required
                     value={modDescription}
                     onChange={(e) => setModDescription(e.target.value)}
-                    className="w-full rounded-lg border border-gray-800 bg-[#0a0d14] p-2.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+                    className="w-full rounded-lg border border-[#E8E2D9]/15 bg-[#0E0B14] px-3.5 py-2 text-sm text-[#FAF7F2] focus:border-[#8B5CF6] focus:outline-none"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Action Steps (One command/step per line)
-                  </label>
+                <div className="space-y-1.5">
+                  <label className={tx('formLabel', 'text-[#6B6560]')}>Action Steps (One per line)</label>
                   <textarea
                     required
                     rows={4}
                     value={modStepsText}
                     onChange={(e) => setModStepsText(e.target.value)}
-                    className="w-full rounded-lg border border-gray-800 bg-[#0a0d14] p-2.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+                    className="w-full rounded-lg border border-[#E8E2D9]/15 bg-[#0E0B14] px-3.5 py-2 text-xs font-mono text-[#FAF7F2] focus:border-[#8B5CF6] focus:outline-none"
                   />
                 </div>
 
-                <div className="flex justify-end space-x-3 pt-2">
+                <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]/10">
                   <button
                     type="button"
                     onClick={() => setShowModifyModal(false)}
-                    className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2 text-xs text-gray-300 hover:bg-gray-800"
+                    className="rounded-lg border border-[#E8E2D9]/15 px-4 py-2 text-xs font-semibold text-[#E8E2D9] hover:bg-[#E8E2D9]/5"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={loading}
-                    className="flex items-center space-x-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+                    className="rounded-lg bg-[#8B5CF6] px-5 py-2 text-xs font-semibold text-[#FAF7F2] hover:bg-[#8B5CF6]/90 disabled:opacity-50"
                   >
-                    <span>Re-evaluate Risk Engine</span>
-                    <ArrowRight className="h-3.5 w-3.5" />
+                    {loading ? 'Re-evaluating...' : 'Submit for Re-evaluation'}
                   </button>
                 </div>
               </form>
             ) : (
-              // Step 2: Review Re-evaluated Plan & Decide
-              <div className="space-y-4">
-                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-2">
-                  <h4 className="text-xs font-bold text-emerald-300 uppercase tracking-wide">
-                    Risk Engine Re-evaluation Complete
-                  </h4>
-                  <div className="flex items-center space-x-2 text-xs text-gray-300">
-                    <span>Re-evaluated Risk Tier:</span>
-                    <span className="font-bold text-emerald-400 uppercase bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/40">
-                      {reevaluatedRiskTier || 'medium'}
+              <div className="space-y-6">
+                <div className="rounded-lg border border-[#22C55E]/30 bg-[#22C55E]/10 p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-[#22C55E]">
+                    <CheckCircle2 className="h-5 w-5" />
+                    <span className="font-semibold text-sm">Risk Re-evaluation Complete</span>
+                  </div>
+                  <p className={tx('cardSummary', 'text-[#E8E2D9]')}>
+                    The modified plan was evaluated by the OPA Policy Engine.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1 text-xs">
+                    <span className="text-[#6B6560]">New Risk Tier:</span>
+                    <span className="font-semibold uppercase px-2 py-0.5 rounded bg-[#8B5CF6]/20 text-[#8B5CF6] border border-[#8B5CF6]/30">
+                      {reevaluatedRiskTier}
                     </span>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <h5 className="text-xs font-semibold text-gray-400">Modified Steps for Execution:</h5>
-                  <div className="rounded-lg bg-[#0a0d14] p-3 border border-gray-800 font-mono text-xs text-gray-300 space-y-1">
-                    {modStepsText.split('\n').map((step, idx) => (
-                      <div key={idx} className="flex items-center space-x-2">
-                        <span className="text-gray-500">{idx + 1}.</span>
-                        <span>{step}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex justify-end space-x-3 pt-3">
+                <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]/10">
                   <button
                     type="button"
                     onClick={() => setModifyStep(1)}
-                    className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2 text-xs text-gray-300 hover:bg-gray-800"
+                    className="rounded-lg border border-[#E8E2D9]/15 px-4 py-2 text-xs font-semibold text-[#E8E2D9] hover:bg-[#E8E2D9]/5"
                   >
                     Back to Edit
                   </button>
                   <button
-                    type="button"
-                    onClick={() => setShowModifyModal(false)}
-                    className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/20"
-                  >
-                    Reject Modified
-                  </button>
-                  <button
-                    type="button"
-                    disabled={loading}
                     onClick={handleModifyStep2Approve}
-                    className="flex items-center space-x-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                    disabled={loading}
+                    className="rounded-lg bg-[#22C55E] px-5 py-2 text-xs font-semibold text-[#0E0B14] hover:bg-[#22C55E]/90 disabled:opacity-50"
                   >
-                    <CheckCircle2 className="h-4 w-4" />
-                    <span>Approve & Resume Graph</span>
+                    {loading ? 'Approving...' : 'Approve Modified Plan'}
                   </button>
                 </div>
               </div>
@@ -350,43 +353,3 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
     </div>
   );
 }
-
-export interface ActionModalsProps {
-  incidentId: string;
-  actionId: string;
-  currentPlan?: ActionPlanDTO | null;
-  showApprove: boolean;
-  showReject: boolean;
-  showModify: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
-}
-
-export function ActionModals({
-  incidentId,
-  actionId,
-  currentPlan,
-  showApprove,
-  showReject,
-  showModify,
-  onClose,
-  onSuccess,
-}: ActionModalsProps) {
-  const dummyAction: RemediationActionDTO = {
-    id: actionId,
-    incident_id: incidentId,
-    name: 'Execute Action Plan',
-    risk_tier: 'high',
-    status: 'pending_approval',
-  };
-
-  return (
-    <ActionControls
-      incidentId={incidentId}
-      action={dummyAction}
-      recommendedPlan={currentPlan}
-      onRefresh={onSuccess}
-    />
-  );
-}
-

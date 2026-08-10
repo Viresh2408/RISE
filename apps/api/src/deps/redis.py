@@ -17,6 +17,9 @@ except ImportError:
     redis = None  # type: ignore
 
 
+_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+
 def get_redis_client() -> Generator[Any, None, None]:
     """FastAPI dependency: yield a redis.Redis client, close on teardown."""
     if redis is None:

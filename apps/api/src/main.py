@@ -9,6 +9,12 @@ if str(root_dir) not in sys.path:
 if str(rise_core_dir) not in sys.path:
     sys.path.insert(0, str(rise_core_dir))
 
+from dotenv import load_dotenv
+env_path = root_dir / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path, override=True)
+
+
 
 def _assert_safe_test_mode() -> None:
     """Refuse to start if RISE_TEST_MODE=1 outside a local/test environment.

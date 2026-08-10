@@ -9,13 +9,15 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
+  const PUBLIC_PATHS = ['/', '/login'];
+
   useEffect(() => {
-    if (!loading && !session && pathname !== '/login') {
+    if (!loading && !session && !PUBLIC_PATHS.includes(pathname)) {
       router.push('/login');
     }
   }, [session, loading, pathname, router]);
 
-  if (loading) {
+  if (loading && !PUBLIC_PATHS.includes(pathname)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0a0d14]">
         <div className="flex flex-col items-center space-y-4">
@@ -26,7 +28,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!session && pathname !== '/login') {
+  if (!session && !PUBLIC_PATHS.includes(pathname)) {
     return null;
   }
 

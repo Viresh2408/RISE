@@ -3,14 +3,15 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../lib/auth-context';
-import { Shield, Lock, Mail, AlertCircle, ArrowRight, Sparkles } from 'lucide-react';
+import { Shield, Lock, Mail, AlertCircle, ArrowRight } from 'lucide-react';
+import { tx } from '../../lib/typography';
 
 export default function LoginPage() {
   const { session, login, loading } = useAuth();
   const router = useRouter();
 
-  const [email, setEmail] = useState('engineer@rise.internal');
-  const [password, setPassword] = useState('Password123!');
+  const [email, setEmail] = useState('demo@rise.internal');
+  const [password, setPassword] = useState('demo1234');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -36,36 +37,53 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col justify-center py-12 sm:px-6 lg:px-8 bg-[#0E0B14] text-[#FAF7F2] font-hanken">
+    <div className="flex min-h-screen flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 bg-[#FAF7F2] text-[#0E0B14]">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center space-y-3">
-        <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-purple-950/80 border border-purple-500/40 text-amber-400 glow-purple">
+        <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#4C2A85] text-[#FAF7F2] shadow-md">
           <Shield className="h-6 w-6" />
         </div>
-        <h2 className="font-fraunces text-3xl font-bold tracking-tight text-white">
-          RISE Antigravity Auth
-        </h2>
-        <p className="text-xs font-mono text-purple-300">
-          Autonomous Incident Remediation & Human Approval Console
+        <h1 className={tx('loginTitle', 'text-[#0E0B14]')}>
+          Sign in to RISE
+        </h1>
+        <p className={tx('cardMeta', 'text-[#6B6560]')}>
+          Autonomous Incident Remediation & Operations Control Plane
         </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="glass-panel p-8 rounded-xl border border-white/10 shadow-2xl">
+        <div className="rounded-xl border border-[#E8E2D9] bg-white p-6 sm:p-8 shadow-xl space-y-6">
+          {/* Demo credentials banner */}
+          <div className="rounded-lg border border-[#F5A623]/40 bg-[#F5A623]/10 p-3.5 space-y-1">
+            <p className={tx('formLabel', 'text-[#4C2A85]')}>
+              Demo Credentials (Local Dev)
+            </p>
+            <div className="space-y-0.5 font-mono text-xs text-[#0E0B14]">
+              <div>
+                <span className="text-[#6B6560]">Email: </span>
+                <code className="font-semibold text-[#4C2A85]">demo@rise.internal</code>
+              </div>
+              <div>
+                <span className="text-[#6B6560]">Pass : </span>
+                <code className="font-semibold text-[#4C2A85]">demo1234</code>
+              </div>
+            </div>
+          </div>
+
           {errorMsg && (
-            <div className="mb-6 flex items-center space-x-2.5 rounded-lg border border-red-500/40 bg-red-950/40 p-3.5 text-xs text-red-300 font-mono">
-              <AlertCircle className="h-4 w-4 flex-shrink-0 text-red-400" />
-              <span>{errorMsg}</span>
+            <div className="flex items-center space-x-2.5 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3.5 text-[#EF4444]">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              <span className={tx('errorText')}>{errorMsg}</span>
             </div>
           )}
 
-          <form className="space-y-5 font-mono text-xs" onSubmit={handleSubmit}>
-            <div>
-              <label className="block text-gray-300 mb-1.5 font-semibold">
-                Work Email Address
+          <form className="space-y-5" onSubmit={handleSubmit}>
+            <div className="space-y-1.5">
+              <label className={tx('formLabel', 'block text-[#6B6560]')}>
+                Email Address
               </label>
               <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
-                  <Mail className="h-4 w-4 text-purple-400" />
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#6B6560]">
+                  <Mail className="h-4 w-4" />
                 </div>
                 <input
                   type="email"
@@ -73,18 +91,21 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="engineer@rise.internal"
-                  className="w-full rounded-lg border border-white/10 bg-black/60 pl-10 pr-3 py-2.5 text-xs text-white placeholder-gray-600 focus:border-amber-400 focus:outline-none"
+                  className={tx(
+                    'inputText',
+                    'w-full rounded-lg border border-[#E8E2D9] bg-[#FAF7F2] pl-10 pr-3.5 py-2.5 text-[#0E0B14] placeholder-[#6B6560]/60 focus:border-[#8B5CF6] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 transition-all duration-150'
+                  )}
                 />
               </div>
             </div>
 
-            <div>
-              <label className="block text-gray-300 mb-1.5 font-semibold">
-                Supabase Auth Password
+            <div className="space-y-1.5">
+              <label className={tx('formLabel', 'block text-[#6B6560]')}>
+                Password
               </label>
               <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
-                  <Lock className="h-4 w-4 text-purple-400" />
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-[#6B6560]">
+                  <Lock className="h-4 w-4" />
                 </div>
                 <input
                   type="password"
@@ -92,7 +113,10 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full rounded-lg border border-white/10 bg-black/60 pl-10 pr-3 py-2.5 text-xs text-white placeholder-gray-600 focus:border-amber-400 focus:outline-none"
+                  className={tx(
+                    'inputText',
+                    'w-full rounded-lg border border-[#E8E2D9] bg-[#FAF7F2] pl-10 pr-3.5 py-2.5 text-[#0E0B14] placeholder-[#6B6560]/60 focus:border-[#8B5CF6] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/20 transition-all duration-150'
+                  )}
                 />
               </div>
             </div>
@@ -100,21 +124,24 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={submitting || loading}
-              className="w-full flex items-center justify-center space-x-2 rounded-lg bg-amber-500 hover:bg-amber-400 py-3 text-xs font-bold text-black disabled:opacity-50 transition-all glow-amber font-mono"
+              className={tx(
+                'ctaButton',
+                'w-full flex items-center justify-center space-x-2 rounded-lg bg-[#4C2A85] hover:bg-[#8B5CF6] py-3 text-[#FAF7F2] disabled:opacity-50 transition-colors duration-200 shadow-md'
+              )}
             >
               {submitting ? (
-                <span>Authenticating...</span>
+                <span>Signing in...</span>
               ) : (
                 <>
-                  <Sparkles className="h-4 w-4" />
-                  <span>Sign In to Console</span>
+                  <span>Sign In</span>
+                  <ArrowRight className="h-4 w-4" />
                 </>
               )}
             </button>
           </form>
 
-          <div className="mt-6 border-t border-white/10 pt-4 text-center">
-            <p className="text-[11px] font-mono text-gray-400">
+          <div className="border-t border-[#E8E2D9] pt-4 text-center">
+            <p className={tx('cardMeta', 'text-[#6B6560]')}>
               Guarded by Supabase JWT & OPA RBAC Policy Matrix
             </p>
           </div>

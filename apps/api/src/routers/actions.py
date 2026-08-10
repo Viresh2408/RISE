@@ -1,6 +1,6 @@
 """Actions and Decisions Router."""
 
-from typing import Optional
+from typing import Any, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from schemas import (
     ActionApproveRequest,
@@ -17,7 +17,7 @@ from schemas import (
 )
 from apps.agents.src.nodes.execution import run_execution_agent
 from mcp_client.hash import compute_action_plan_hash
-from apps.api.src.deps import UserContext, require_role, require_idempotency_key
+from apps.api.src.deps import UserContext, require_role, require_idempotency_key, get_db
 from apps.api.src.middleware.envelope import build_response
 
 router = APIRouter(prefix="/incidents/{incident_id}", tags=["Decisions & Actions"])
@@ -49,6 +49,7 @@ async def approve_action(
     req: Optional[ActionApproveRequest] = None,
     idempotency_key: str = Depends(require_idempotency_key),
     user: UserContext = Depends(require_role("approver")),
+    db: Any = Depends(get_db),
 ):
     from apps.api.src.services.approval_lock import (
         acquire_single_use_approval_lock,
@@ -108,8 +109,24 @@ async def approve_action(
 
         mark_approval_decided(action_id, "approved")
 
+        # Update Incident status in DB to resolved upon approval
+        try:
+            import uuid
+            from datetime import datetime, timezone
+            from sqlalchemy import select
+            from db.models import Incident
+            inc_uuid = uuid.UUID(incident_id)
+            inc = db.execute(select(Incident).where(Incident.id == inc_uuid)).scalar_one_or_none()
+            if inc:
+                inc.status = "resolved"
+                inc.updated_at = datetime.now(timezone.utc)
+                db.commit()
+        except Exception as exc:
+            pass
+
         # Backend-driven execution triggered automatically as a consequence of approval
         try:
+            import threading, asyncio
             action_plan = {
                 "action_type": "restart_pod",
                 "action_steps": [{"tool": "restart_pod", "params": {"namespace": "staging", "pod_name": "auth-service-7890"}}],
@@ -125,11 +142,9 @@ async def approve_action(
                 "environment": "staging",
                 "human_approval": "approved",
             }
-            # Dispatch execution agent backend-side asynchronously
-            import asyncio
-            asyncio.create_task(run_execution_agent(state))
-        except Exception:
-            pass
+            threading.Thread(target=lambda: asyncio.run(run_execution_agent(state)), daemon=True).start()
+        except Exception as exc:
+            logger.warning("Failed launching run_execution_agent thread: %s", exc)
 
         res = ActionApproveResponse(
             status="approved",

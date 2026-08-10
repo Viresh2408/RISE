@@ -72,6 +72,7 @@ class IncidentDetailDTO(IncidentDTO):
     impact: Optional[dict[str, Any]] = None
     actions: list[dict[str, Any]] = Field(default_factory=list)
     approvals: list[dict[str, Any]] = Field(default_factory=list)
+    decision: Optional[dict[str, Any]] = None
 
 
 class IncidentCreateRequest(BaseModel):
@@ -243,12 +244,18 @@ class PolicyUpdateRequest(BaseModel):
 
 class IntegrationDTO(BaseModel):
     type: str
-    status: str
+    name: str = ""
+    description: str = ""
+    status: str  # 'connected' | 'disconnected' | 'error'
     scopes: list[str] = Field(default_factory=list)
+    connected_at: Optional[str] = None
+    icon: Optional[str] = None
 
 
 class IntegrationConnectResponse(BaseModel):
-    redirect_url: str
+    redirect_url: Optional[str] = None
+    success: bool = False
+    message: str = ""
 
 
 class MttrReportDTO(BaseModel):

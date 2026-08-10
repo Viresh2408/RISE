@@ -51,11 +51,20 @@ export interface IncidentRefDTO {
   similarity: number;
 }
 
+export interface CodeFixSnippetDTO {
+  file: string;
+  github_url: string;
+  lines: string;
+  commit_id: string;
+  diff: string;
+}
+
 export interface ActionPlanDTO {
   id: string;
   description: string;
   steps: string[];
   rollback_plan?: string | null;
+  code_fix_snippet?: CodeFixSnippetDTO | null;
 }
 
 export interface RootCauseDTO {
@@ -138,3 +147,84 @@ export interface ActionModifyResponse {
   status: 're-evaluated';
   new_risk_tier: RiskTier;
 }
+
+// Knowledge Base / Runbooks
+export interface KnowledgeDTO {
+  id: string;
+  title: string;
+  content: string;
+  service?: string | null;
+  tags: string[];
+  created_at: string;
+  updated_at?: string | null;
+}
+
+// OPA Risk Policies
+export interface PolicyDTO {
+  id: string;
+  name: string;
+  description: string;
+  action_types: string[];
+  risk_tier: RiskTier;
+  requires_approval: boolean;
+  version: number;
+  created_at: string;
+}
+
+// Reports
+export interface MttrDataPoint {
+  service: string;
+  avg_minutes: number;
+  incident_count: number;
+  period: string;
+}
+
+export interface MttrReportDTO {
+  overall_avg_minutes: number;
+  reduction_pct: number;
+  data_points: MttrDataPoint[];
+}
+
+export interface AutonomyReportDTO {
+  auto_resolved_pct: number;
+  human_approved_pct: number;
+  human_rejected_pct: number;
+  total_incidents: number;
+  by_severity: {
+    SEV1: number;
+    SEV2: number;
+    SEV3: number;
+    SEV4: number;
+  };
+}
+
+// Integrations
+export type IntegrationStatus = 'connected' | 'disconnected' | 'error';
+
+export interface IntegrationDTO {
+  type: string;
+  name: string;
+  description: string;
+  status: IntegrationStatus;
+  connected_at?: string | null;
+  icon?: string;
+}
+
+// Agent Runs
+export interface AgentRunDTO {
+  id: string;
+  incident_id: string;
+  status: 'running' | 'completed' | 'failed';
+  started_at: string;
+  completed_at?: string | null;
+  nodes_executed: number;
+}
+
+export interface AgentStepDTO {
+  node: string;
+  status: 'success' | 'failed' | 'skipped';
+  duration_ms: number;
+  output_summary?: string | null;
+  started_at: string;
+}
+

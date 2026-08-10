@@ -219,6 +219,7 @@ async def _ingest(
         occurred_at=datetime.now(timezone.utc),
     )
     db.add(event_row)
+    db.flush()
 
     create_audit_event(
         db,
@@ -249,6 +250,15 @@ async def _ingest(
         resource_id=resource_id,
         severity_hint=incident_event_schema.severity_hint,
     )
+
+    # ── Background agent graph pipeline execution ─────────────────────────
+    try:
+        from apps.agents.src.orchestrator.graph import run_incident
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(run_incident, str(tenant_id), str(new_incident_id), payload))
+        logger.info("Launched background agent graph execution for incident_id=%s", new_incident_id)
+    except Exception as exc:
+        logger.warning("Failed launching background run_incident task: %s", exc)
 
     logger.info(
         "Webhook %s: incident created incident_id=%s resource_id=%r",

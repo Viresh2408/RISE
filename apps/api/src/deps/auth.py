@@ -413,18 +413,33 @@ def require_role(min_role: str) -> Callable:
 def verify_webhook_signature(source: str) -> Callable:
     """FastAPI dependency for webhook signature verification.
 
-    Each source uses a different auth mechanism.  Full implementations are a
-    follow-up task; this stub always passes.
+    Delegates to the dedicated verifiers in
+    `apps.api.src.services.ingestion.signature_verifier`.
 
     Args:
         source: One of 'cloudwatch', 'alertmanager', 'github', 'slack'.
     """
+    from apps.api.src.services.ingestion.signature_verifier import (
+        get_alertmanager_verifier,
+        get_github_verifier,
+        get_slack_verifier,
+        get_sns_verifier,
+    )
+
+    verifiers = {
+        "cloudwatch": get_sns_verifier,
+        "alertmanager": get_alertmanager_verifier,
+        "github": get_github_verifier,
+        "slack": get_slack_verifier,
+    }
+
+    verifier_getter = verifiers.get(source)
+
     async def _verifier(request: Request) -> bool:
-        # TODO: implement per-source signature checks:
-        #   cloudwatch  → SNS signature
-        #   alertmanager → X-RISE-Secret header comparison
-        #   github      → HMAC-SHA256 X-Hub-Signature-256
-        #   slack       → Slack signing secret HMAC
+        if verifier_getter:
+            verifier = verifier_getter()
+            body = await request.body()
+            await verifier.verify(request, body)
         return True
 
     _verifier.__name__ = f"verify_webhook_{source}"

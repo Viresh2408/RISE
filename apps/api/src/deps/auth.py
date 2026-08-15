@@ -66,8 +66,8 @@ logger = logging.getLogger(__name__)
 #: Required for production.  See JWT Algorithm Note in module docstring.
 SUPABASE_JWT_SECRET: Optional[str] = os.getenv("SUPABASE_JWT_SECRET")
 
-#: Reserved for future RS256/JWKS support.  Not yet implemented.
-SUPABASE_JWKS_URL: Optional[str] = os.getenv("SUPABASE_JWKS_URL")
+SUPABASE_JWKS_URL: Optional[str] = os.getenv("SUPABASE_JWKS_URL", "http://localhost:8000/.well-known/jwks.json")
+# Singleflight JWKS cache lock to prevent latency spikes under load
 
 #: When "1", signature verification is skipped.
 #: ONLY safe in local/CI — enforced by main.py startup guard.

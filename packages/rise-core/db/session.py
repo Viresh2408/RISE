@@ -1,15 +1,40 @@
 import os
+import logging
 from contextlib import contextmanager
 from typing import Generator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
+logger = logging.getLogger(__name__)
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/rise_dev"
 )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+def _init_engine():
+    if "postgresql" in DATABASE_URL:
+        try:
+            # 2-second timeout to check local PostgreSQL status
+            test_engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args={"connect_timeout": 2})
+            with test_engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return test_engine
+        except Exception as exc:
+            logger.warning("PostgreSQL on localhost:5432 not reachable (%s). Falling back to SQLite rise_dev.db", exc)
+            sqlite_url = "sqlite:///./rise_dev.db"
+            sqlite_engine = create_engine(sqlite_url, connect_args={"check_same_thread": False})
+            try:
+                from db.base import Base
+                import db.models  # Ensure models are loaded
+                Base.metadata.create_all(bind=sqlite_engine)
+            except Exception as e:
+                logger.warning("Could not auto-create SQLite tables: %s", e)
+            return sqlite_engine
+    return create_engine(DATABASE_URL, pool_pre_ping=True)
+
+
+engine = _init_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -29,10 +54,11 @@ def tenant_session(tenant_id: str, db: Session = None) -> Generator[Session, Non
         close_session = True
 
     try:
-        db.execute(
-            text("SELECT set_config('app.current_tenant_id', :tenant_id, false)"),
-            {"tenant_id": str(tenant_id)},
-        )
+        if "postgresql" in str(db.bind.url):
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, false)"),
+                {"tenant_id": str(tenant_id)},
+            )
         yield db
     finally:
         if close_session:

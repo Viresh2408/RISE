@@ -3,9 +3,15 @@
 import asyncio
 import concurrent.futures
 import logging
+import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypedDict
+
+_CORE_PATH = str(Path(__file__).resolve().parents[4] / "packages" / "rise-core")
+if _CORE_PATH not in sys.path:
+    sys.path.insert(0, _CORE_PATH)
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -28,6 +34,10 @@ class AgentState(TypedDict, total=False):
     root_cause: dict
     impact_assessment: dict
     decision: dict
+    action_plan: dict
+    rollback_count: int
+    rollback_execution_log: dict
+    slack_card: dict
 
     # Human-in-the-loop
     human_approval: str  # "approved" | "rejected" | ""
@@ -35,6 +45,8 @@ class AgentState(TypedDict, total=False):
 
     # Execution & verification
     execution_log: dict
+    post_action_metrics: dict
+    baseline_metrics: dict
     verification_result: dict
 
     # Orchestrator control
@@ -43,6 +55,10 @@ class AgentState(TypedDict, total=False):
     should_escalate: bool
     error: str
     status: str  # "running" | "completed" | "escalated" | "manual_handoff"
+    requires_approval: bool
+    risk_tier: str
+    confidence: float
+    runbook_match: dict
 
 
 def _to_jsonable(obj: Any) -> Any:
@@ -183,7 +199,10 @@ def node_ingest(state: AgentState) -> AgentState:
         if "prompt_injection_detected" not in sanitization_flags:
             sanitization_flags.append("prompt_injection_detected")
 
-    payload["sanitization_flags"] = sanitization_flags
+    if sanitization_flags:
+        payload["sanitization_flags"] = sanitization_flags
+    elif "sanitization_flags" in payload:
+        payload["sanitization_flags"] = []
     res["event_payload"] = payload
     return res
 
@@ -364,6 +383,8 @@ def node_rollback(state: AgentState) -> AgentState:
 def node_close(state: AgentState) -> AgentState:
     res = dict(state)
     res["status"] = "completed"
+    res["should_escalate"] = False
+    res["current_step"] = "close"
     return res
 
 
@@ -472,7 +493,7 @@ def create_orchestrator_graph(checkpointer: Any = None) -> Any:
     builder.add_edge("escalate", END)
 
     saver = checkpointer if checkpointer is not None else MemorySaver()
-    return builder.compile(checkpointer=saver)
+    return builder.compile(checkpointer=saver, interrupt_after=["await_human"])
 
 
 def _create_agent_run_record(tenant_id: str, incident_id: str, agent_run_id: str) -> None:

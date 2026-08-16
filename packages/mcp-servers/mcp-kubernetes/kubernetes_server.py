@@ -135,8 +135,10 @@ class MCPKubernetesServer:
             "logs": f"[STAGING LOG] Service {pod_name} tail={tail_lines} lines\n[INFO] Application ready\n[ERROR] Connection reset",
         }
 
-    def restart_pod(self, namespace: str = "staging", pod_name: str = "") -> Dict[str, Any]:
+    def restart_pod(self, namespace: str = "staging", pod_name: str = "", **kwargs: Any) -> Dict[str, Any]:
         """Restart target pod in Kubernetes (deletes pod so controller recreates it)."""
+        pod_name = pod_name or kwargs.get("pod") or kwargs.get("pod_id") or "default-pod"
+        namespace = namespace or kwargs.get("namespace", "staging")
         restarted_real = False
         if self._k8s_client_available:
             try:
@@ -171,7 +173,9 @@ class MCPKubernetesServer:
             "real_k8s_api_used": restarted_real,
         }
 
-    def rollback_deployment(self, namespace: str = "staging", deployment_name: str = "") -> Dict[str, Any]:
+    def rollback_deployment(self, namespace: str = "staging", deployment_name: str = "", **kwargs: Any) -> Dict[str, Any]:
+        deployment_name = deployment_name or kwargs.get("deploy") or kwargs.get("deployment") or "default-deploy"
+        namespace = namespace or kwargs.get("namespace", "staging")
         return {
             "status": "success",
             "message": f"Deployment '{deployment_name}' in namespace '{namespace}' rolled back to previous revision",
@@ -179,7 +183,9 @@ class MCPKubernetesServer:
             "deployment": deployment_name,
         }
 
-    def scale_deployment(self, namespace: str = "staging", deployment_name: str = "", replicas: int = 1) -> Dict[str, Any]:
+    def scale_deployment(self, namespace: str = "staging", deployment_name: str = "", replicas: int = 1, **kwargs: Any) -> Dict[str, Any]:
+        deployment_name = deployment_name or kwargs.get("deploy") or kwargs.get("deployment") or "default-deploy"
+        namespace = namespace or kwargs.get("namespace", "staging")
         return {
             "status": "success",
             "message": f"Scaled deployment '{deployment_name}' in namespace '{namespace}' to {replicas} replicas",

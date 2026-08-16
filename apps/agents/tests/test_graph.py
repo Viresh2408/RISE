@@ -16,14 +16,24 @@ from apps.agents.src.orchestrator.graph import (
 
 def test_noop_end_to_end_completes():
     """Test graph completes auto-approved path from START to END."""
-    tenant_id = str(uuid.uuid4())
-    incident_id = str(uuid.uuid4())
+    app = create_orchestrator_graph()
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
 
-    final_state = run_incident(
-        tenant_id=tenant_id,
-        incident_id=incident_id,
-        event_payload={"alert": "CPU high", "service": "payment-service"},
-    )
+    initial_state: AgentState = {
+        "tenant_id": str(uuid.uuid4()),
+        "incident_id": str(uuid.uuid4()),
+        "agent_run_id": thread_id,
+        "decision": {"requires_approval": False, "risk_tier": "low"},
+        "action_plan": {
+            "action_type": "restart_pod",
+            "action_steps": [{"tool": "restart_pod", "params": {"pod": "auth-1"}}],
+            "rollback_plan": [{"tool": "rollback_deployment", "params": {"deploy": "auth"}}],
+        },
+        "post_action_metrics": {"health_status": "200 OK", "error_rate": 0.0},
+    }
+
+    final_state = app.invoke(initial_state, config=config)
 
     assert final_state.get("status") == "completed"
     assert final_state.get("should_escalate") is False
@@ -42,10 +52,20 @@ def test_noop_needs_approval_then_approved():
         "agent_run_id": thread_id,
         "event_payload": {"alert": "High memory"},
         "decision": {"requires_approval": True, "status": "needs_approval"},
-        "human_approval": "approved",
+        "action_plan": {
+            "action_type": "restart_pod",
+            "action_steps": [{"tool": "restart_pod", "params": {"pod": "auth-1"}}],
+            "rollback_plan": [{"tool": "rollback_deployment", "params": {"deploy": "auth"}}],
+        },
     }
 
-    final_state = app.invoke(initial_state, config=config)
+    # Step 1: Pauses at await_human
+    state_step1 = app.invoke(initial_state, config=config)
+    assert state_step1.get("current_step") == "await_human"
+
+    # Step 2: Resume with approval
+    app.update_state(config, {"human_approval": "approved"})
+    final_state = app.invoke(None, config=config)
 
     assert final_state.get("status") == "completed"
     assert final_state.get("human_approval") == "approved"
@@ -63,10 +83,20 @@ def test_noop_needs_approval_then_rejected():
         "incident_id": str(uuid.uuid4()),
         "agent_run_id": thread_id,
         "decision": {"requires_approval": True, "status": "needs_approval"},
-        "human_approval": "rejected",
+        "action_plan": {
+            "action_type": "restart_pod",
+            "action_steps": [{"tool": "restart_pod", "params": {"pod": "auth-1"}}],
+            "rollback_plan": [{"tool": "rollback_deployment", "params": {"deploy": "auth"}}],
+        },
     }
 
-    final_state = app.invoke(initial_state, config=config)
+    # Step 1: Pauses at await_human
+    state_step1 = app.invoke(initial_state, config=config)
+    assert state_step1.get("current_step") == "await_human"
+
+    # Step 2: Resume with rejection
+    app.update_state(config, {"human_approval": "rejected"})
+    final_state = app.invoke(None, config=config)
 
     assert final_state.get("status") == "manual_handoff"
     assert final_state.get("current_step") == "manual_handoff"
@@ -82,7 +112,13 @@ def test_noop_verify_fail_triggers_rollback():
         "tenant_id": str(uuid.uuid4()),
         "incident_id": str(uuid.uuid4()),
         "agent_run_id": thread_id,
-        "verification_result": {"status": "fail"},
+        "decision": {"requires_approval": False, "risk_tier": "low"},
+        "action_plan": {
+            "action_type": "restart_pod",
+            "action_steps": [{"tool": "restart_pod", "params": {"pod": "auth-1"}}],
+            "rollback_plan": [{"tool": "rollback_deployment", "params": {"deploy": "auth"}}],
+        },
+        "post_action_metrics": {"health_status": "error", "error_rate": 50.0},
     }
 
     final_state = app.invoke(initial_state, config=config)
@@ -170,8 +206,17 @@ def test_full_graph_exception_escalates():
 def test_postgres_checkpoint_resume():
     """Test Postgres checkpointer resumes state across restarts."""
     import os
+    import socket
     from langgraph.checkpoint.postgres import PostgresSaver
     from psycopg_pool import ConnectionPool
+
+    # Quick connectivity check to avoid 30s pool timeout if Postgres is offline
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1.0)
+    result = sock.connect_ex(("localhost", 5432))
+    sock.close()
+    if result != 0:
+        pytest.skip("PostgreSQL is not reachable on localhost:5432")
 
     db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/rise_dev")
 
@@ -187,6 +232,13 @@ def test_postgres_checkpoint_resume():
             "tenant_id": str(uuid.uuid4()),
             "incident_id": str(uuid.uuid4()),
             "agent_run_id": thread_id,
+            "decision": {"requires_approval": False, "risk_tier": "low"},
+            "action_plan": {
+                "action_type": "restart_pod",
+                "action_steps": [{"tool": "restart_pod", "params": {"pod": "auth-1"}}],
+                "rollback_plan": [{"tool": "rollback_deployment", "params": {"deploy": "auth"}}],
+            },
+            "post_action_metrics": {"health_status": "200 OK", "error_rate": 0.0},
         }
 
         final_state = app.invoke(initial_state, config=config)

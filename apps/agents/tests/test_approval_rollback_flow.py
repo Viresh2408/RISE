@@ -44,6 +44,7 @@ def test_verification_failure_triggers_auto_rollback_and_escalates():
         "tenant_id": str(uuid.uuid4()),
         "incident_id": str(uuid.uuid4()),
         "agent_run_id": thread_id,
+        "decision": {"requires_approval": False, "risk_tier": "low"},
         "action_plan": {
             "action_type": "restart_pod",
             "action_steps": [{"tool": "restart_pod", "params": {"pod": "auth-1"}}],
@@ -81,11 +82,10 @@ def test_slack_card_approval_resumes_paused_graph_not_fresh_run():
     assert state_step1.get("current_step") == "await_human"
     assert state_step1.get("status") != "completed"
 
-    # Step 2: Resume exact thread by setting human_approval = approved
-    resume_state = dict(state_step1)
-    resume_state["human_approval"] = "approved"
-
-    state_step2 = app.invoke(resume_state, config=config)
+    # Step 2: Write approval into the existing checkpoint then resume from the
+    # interrupt point — do NOT pass a full state dict which would restart the graph.
+    app.update_state(config, {"human_approval": "approved"})
+    state_step2 = app.invoke(None, config=config)
 
     assert state_step2.get("status") == "completed"
     assert state_step2.get("current_step") == "close"
@@ -117,14 +117,12 @@ def test_worker_process_restart_resumes_paused_graph():
     # Simulated worker crash/teardown: delete app_worker_a instance
     del app_worker_a
 
-    # Process B: Restarted worker process initializes new graph instance with checkpointer
+    # Process B: Restarted worker — new graph instance shares the same checkpointer.
+    # Write the approval into the checkpoint then resume from the interrupt point;
+    # do NOT pass a full state dict which would restart the entire graph.
     app_worker_b = create_orchestrator_graph(checkpointer=shared_checkpointer)
-
-    # Resume from checkpoint
-    restarted_state = dict(shared_checkpointer.get(config)["channel_values"])
-    restarted_state["human_approval"] = "approved"
-
-    final_state = app_worker_b.invoke(restarted_state, config=config)
+    app_worker_b.update_state(config, {"human_approval": "approved"})
+    final_state = app_worker_b.invoke(None, config=config)
 
     assert final_state.get("status") == "completed"
     assert final_state.get("current_step") == "close"
@@ -159,6 +157,7 @@ def test_bounded_rollback_circuit_breaker():
         "tenant_id": str(uuid.uuid4()),
         "incident_id": str(uuid.uuid4()),
         "agent_run_id": thread_id,
+        "decision": {"requires_approval": False, "risk_tier": "low"},
         "action_plan": {
             "action_type": "restart_pod",
             "action_steps": [{"tool": "restart"}],

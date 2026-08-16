@@ -105,7 +105,7 @@ export default function IncidentsDashboard() {
           if (!pollingRef.current) {
             pollingRef.current = setInterval(() => {
               fetchIncidents(true);
-            }, 3000);
+            }, 30000); // 30s fallback poll — avoids hammering backend when offline
           }
         }
       });

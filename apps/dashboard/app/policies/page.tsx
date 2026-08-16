@@ -137,6 +137,9 @@ function PoliciesContent() {
         name,
         description: desc,
         action_types: actionArray,
+        action_pattern: actionArray[0] || name || 'k8s.pod.restart',
+        environment: 'production',
+        max_blast_radius: 1,
         risk_tier: riskTier,
         requires_approval: riskTier === 'critical' ? true : requiresApproval,
       });
@@ -211,6 +214,11 @@ function PoliciesContent() {
           {policies.map((pol) => {
             const style = getRiskTierStyle(pol.risk_tier);
             const isHistoryOpen = !!expandedHistory[pol.id];
+            const actionTypes = (pol.action_types && pol.action_types.length > 0)
+              ? pol.action_types
+              : (pol.action_pattern ? [pol.action_pattern] : []);
+            const polName = pol.name || pol.id || pol.action_pattern || 'Untitled Policy';
+            const polDesc = pol.description || (pol.action_pattern ? `Policy governing ${pol.action_pattern} in ${pol.environment || 'production'}` : 'No description provided.');
 
             return (
               <div
@@ -221,7 +229,7 @@ function PoliciesContent() {
                 {/* Top Row */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3 flex-wrap">
-                    <h3 className={tx('cardTitle', 'text-[#FAF7F2]')}>{pol.name}</h3>
+                    <h3 className={tx('cardTitle', 'text-[#FAF7F2]')}>{polName}</h3>
                     <span className={`px-2.5 py-0.5 rounded text-xs font-mono font-bold uppercase border ${style.badge}`}>
                       {pol.risk_tier} Risk
                     </span>
@@ -241,20 +249,22 @@ function PoliciesContent() {
                   </span>
                 </div>
 
-                <p className={tx('cardSummary', 'text-[#6B6560]')}>{pol.description}</p>
+                <p className={tx('cardSummary', 'text-[#6B6560]')}>{polDesc}</p>
 
                 {/* Action types chips */}
-                <div className="flex items-center gap-2 flex-wrap pt-1">
-                  <span className={tx('cardMeta', 'text-[#6B6560]')}>Actions:</span>
-                  {pol.action_types.map((action, i) => (
-                    <span
-                      key={i}
-                      className="rounded border border-[#8B5CF6]/30 bg-[#8B5CF6]/10 px-2 py-0.5 text-xs font-mono text-[#8B5CF6]"
-                    >
-                      {action}
-                    </span>
-                  ))}
-                </div>
+                {actionTypes.length > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap pt-1">
+                    <span className={tx('cardMeta', 'text-[#6B6560]')}>Actions:</span>
+                    {actionTypes.map((action, i) => (
+                      <span
+                        key={i}
+                        className="rounded border border-[#8B5CF6]/30 bg-[#8B5CF6]/10 px-2 py-0.5 text-xs font-mono text-[#8B5CF6]"
+                      >
+                        {action}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 {/* Archived version history collapsible */}
                 {pol.version > 1 && (
@@ -273,9 +283,9 @@ function PoliciesContent() {
                       <div className="mt-3 p-3 rounded-lg border border-[#E8E2D9]/10 bg-[#0E0B14]/60 space-y-2 opacity-50 text-xs font-mono">
                         <div className="flex justify-between text-[#6B6560]">
                           <span>v{pol.version - 1} (Archived)</span>
-                          <span>{new Date(pol.created_at).toLocaleDateString()}</span>
+                          <span>{pol.created_at ? new Date(pol.created_at).toLocaleDateString() : 'Previous'}</span>
                         </div>
-                        <p className="text-[#6B6560]">{pol.description}</p>
+                        <p className="text-[#6B6560]">{polDesc}</p>
                       </div>
                     )}
                   </div>

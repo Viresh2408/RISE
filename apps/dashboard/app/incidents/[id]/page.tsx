@@ -7,7 +7,7 @@ import { Navbar } from '../../../components/navbar';
 import { ActionControls } from '../../../components/action-modals';
 import { CardSkeleton } from '../../../components/shared/CardSkeleton';
 import { EmptyState } from '../../../components/shared/EmptyState';
-import { IncidentDetailDTO, RiskTier } from '../../../lib/types';
+import { IncidentDetailDTO, RiskTier, RootCauseDTO } from '../../../lib/types';
 import { apiClient } from '../../../lib/api-client';
 import { useAuth } from '../../../lib/auth-context';
 import { tx } from '../../../lib/typography';
@@ -102,29 +102,41 @@ export default function IncidentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const fetchIncidentDetail = async (silent = false) => {
+  const fetchIncidentDetail = async (silent = false, signal?: AbortSignal) => {
     const activeToken = session?.token || 'demo-token-hardcoded';
     if (!id) return;
     if (!silent) setLoading(true);
 
     try {
       const data = await apiClient.getIncidentDetail(activeToken, id);
+      if (signal?.aborted) return;
       setIncident(data);
       setErrorMsg(null);
     } catch (err: any) {
-      console.error('Failed fetching incident detail:', err);
-      if (!silent) setErrorMsg(err.message || 'Failed to load incident detail');
+      if (signal?.aborted) return; // ignore cancellation errors
+      // Only log non-connection errors loudly; connection errors are expected when backend is offline
+      if (err?.code !== 'ECONNRESET' && !silent) {
+        console.error('Failed fetching incident detail:', err);
+        setErrorMsg(err.message || 'Failed to load incident detail');
+      }
     } finally {
-      if (!silent) setLoading(false);
+      if (!signal?.aborted && !silent) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchIncidentDetail();
+    const controller = new AbortController();
+    fetchIncidentDetail(false, controller.signal);
+
+    // Poll every 30s instead of 3s — reduces backend hammering when offline
     const interval = setInterval(() => {
-      fetchIncidentDetail(true);
-    }, 3000);
-    return () => clearInterval(interval);
+      fetchIncidentDetail(true, controller.signal);
+    }, 30000);
+
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, [id, session]);
 
   if (loading) {
@@ -158,22 +170,25 @@ export default function IncidentDetailPage() {
     );
   }
 
-  const rootCause = incident.root_cause || {
+  const rootCause: RootCauseDTO = incident.root_cause || {
     cause: incident.title,
     confidence: 0.85,
     explanation: incident.description || incident.title,
     evidence: [
       {
+        id: 'ev-1',
         source: 'Alert Ingestion Engine',
         type: 'log_trace',
         description: `Bug anomaly trace in RISE/apps/${incident.affected_service || 'auth-service'}/src/index.js (L42-L58)`
       },
       {
+        id: 'ev-2',
         source: 'Prometheus Metric Bus',
         type: 'metric_spike',
         description: '503 error rate spiked > 45% above baseline threshold.'
       }
-    ]
+    ],
+    similar_incidents: []
   };
 
   const impact = incident.impact || {

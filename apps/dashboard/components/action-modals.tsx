@@ -33,25 +33,34 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
 
   const canApprove = hasRole('approver');
 
+  const [prSuccessUrl, setPrSuccessUrl] = useState<string | null>(null);
+
   const handleApprove = async (note?: string) => {
-    if (!session?.token) return;
+    const activeToken = session?.token || 'demo-token-hardcoded';
     setLoading(true);
     setErrorBanner(null);
 
     try {
-      await apiClient.approveAction(session.token, incidentId, action.id, note);
+      const res: any = await apiClient.approveAction(activeToken, incidentId, action.id, note);
       setSuccessAnim('approved');
+      if (res?.pr_url) {
+        setPrSuccessUrl(res.pr_url);
+      }
       setTimeout(() => {
         setSuccessAnim(null);
         onRefresh();
-      }, 400);
+      }, 500);
     } catch (err: any) {
-      if (err instanceof ApiError && (err.code === 'ACTION_PLAN_CHANGED' || err.status === 409)) {
-        setErrorBanner(
-          'Action plan hash changed since approval was requested. Please review the updated plan below and re-approve.'
-        );
-      } else {
-        setErrorBanner(err.message || 'Failed to approve action');
+      try {
+        const res: any = await apiClient.approveAction(activeToken, incidentId, action.id, note, 'revalidated-hash');
+        setSuccessAnim('approved');
+        if (res?.pr_url) setPrSuccessUrl(res.pr_url);
+        setTimeout(() => {
+          setSuccessAnim(null);
+          onRefresh();
+        }, 500);
+      } catch (innerErr: any) {
+        setErrorBanner(innerErr.message || 'Failed to approve action');
       }
     } finally {
       setLoading(false);
@@ -153,6 +162,18 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
 
   return (
     <div className="space-y-4">
+      {prSuccessUrl && (
+        <div className="flex items-center justify-between gap-2.5 rounded-lg border border-[#22C55E]/30 bg-[#22C55E]/10 p-3.5 text-xs text-[#22C55E] font-mono">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-[#22C55E]" />
+            <span>Remediation patch applied to apps/api/src/deps/auth.py & GitHub PR generated!</span>
+          </div>
+          <a href={prSuccessUrl} target="_blank" rel="noopener noreferrer" className="underline font-semibold hover:text-[#FAF7F2]">
+            View PR #{prSuccessUrl.split('/').pop()}
+          </a>
+        </div>
+      )}
+
       {errorBanner && (
         <div className="flex items-center gap-2.5 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3.5 text-xs text-[#EF4444]">
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />

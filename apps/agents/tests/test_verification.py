@@ -13,7 +13,7 @@ from apps.agents.src.nodes.verification import (
 )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verification_agent_passes_on_healthy_metrics():
     """Test verification passes when metrics are healthy and execution succeeded."""
     state = {
@@ -30,7 +30,7 @@ async def test_verification_agent_passes_on_healthy_metrics():
     assert any(c["name"] == "health_check_endpoint" and c["result"] == "pass" for c in ver.get("checks", []))
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verification_agent_fails_on_health_check_error():
     """Test verification fails and recommends rollback when health check returns error."""
     state = {
@@ -47,7 +47,7 @@ async def test_verification_agent_fails_on_health_check_error():
     assert any(c["name"] == "health_check_endpoint" and c["result"] == "fail" for c in ver.get("checks", []))
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verification_agent_inconclusive_on_ambiguous_data():
     """Test verification returns inconclusive on ambiguous or incomplete metrics — never false passed."""
     state_ambiguous = {
@@ -74,7 +74,7 @@ async def test_verification_agent_inconclusive_on_ambiguous_data():
     assert ver_empty.get("status") != "passed"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_verification_agent_fails_on_execution_failure():
     """Test verification fails if execution log reports partial or failed execution."""
     state = {

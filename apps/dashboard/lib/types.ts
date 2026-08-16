@@ -162,13 +162,16 @@ export interface KnowledgeDTO {
 // OPA Risk Policies
 export interface PolicyDTO {
   id: string;
-  name: string;
-  description: string;
-  action_types: string[];
+  name?: string;
+  description?: string;
+  action_types?: string[];
+  action_pattern?: string;
+  environment?: string;
+  max_blast_radius?: number;
   risk_tier: RiskTier;
   requires_approval: boolean;
   version: number;
-  created_at: string;
+  created_at?: string;
 }
 
 // Reports
@@ -180,21 +183,24 @@ export interface MttrDataPoint {
 }
 
 export interface MttrReportDTO {
-  overall_avg_minutes: number;
-  reduction_pct: number;
-  data_points: MttrDataPoint[];
+  overall_avg_minutes?: number;
+  avg_mttr_minutes?: number;
+  reduction_pct?: number;
+  data_points?: MttrDataPoint[];
+  trend?: Array<{ date: string; mttr_minutes?: number; mttr?: number }>;
 }
 
 export interface AutonomyReportDTO {
-  auto_resolved_pct: number;
-  human_approved_pct: number;
-  human_rejected_pct: number;
-  total_incidents: number;
-  by_severity: {
-    SEV1: number;
-    SEV2: number;
-    SEV3: number;
-    SEV4: number;
+  auto_resolved_pct?: number;
+  human_approved_pct?: number;
+  human_rejected_pct?: number;
+  rejected_pct?: number;
+  total_incidents?: number;
+  by_severity?: {
+    SEV1?: number;
+    SEV2?: number;
+    SEV3?: number;
+    SEV4?: number;
   };
 }
 

@@ -1,6 +1,6 @@
 [
   {
-    "run_id": "732071ee-b36c-4edd-b765-194afae424b5",
+    "run_id": "39bbd826-88d6-471c-89e9-541226544a21",
     "type": "golden",
     "incident_id": "inc-golden-1",
     "title": "payment-service high error rate \u00e2\u20ac\u201d 503s spiking to 45%",
@@ -80,7 +80,7 @@
     }
   },
   {
-    "run_id": "4cf73ab3-c139-4f92-81db-c6d3efc5b80b",
+    "run_id": "517938e0-cd4d-464e-a556-13d201749d49",
     "type": "golden",
     "incident_id": "inc-golden-2",
     "title": "payment-service memory leak causing OOM restarts",
@@ -160,7 +160,7 @@
     }
   },
   {
-    "run_id": "42b1ad4a-f157-4137-a509-f0641421dfd6",
+    "run_id": "bc602137-9031-4f9f-9e8d-7510c31c63ab",
     "type": "golden",
     "incident_id": "inc-golden-3",
     "title": "auth-service JWT validation latency spike",
@@ -240,7 +240,7 @@
     }
   },
   {
-    "run_id": "3c927921-25ff-405a-ac82-642f8fa9bf9d",
+    "run_id": "ece3d631-f008-4836-9e37-4bdfbd67068f",
     "type": "golden",
     "incident_id": "inc-golden-4",
     "title": "auth-service complete outage \u00e2\u20ac\u201d misconfigured TLS cert",
@@ -320,7 +320,7 @@
     }
   },
   {
-    "run_id": "eb473009-42fa-45dc-83fe-7495258324e3",
+    "run_id": "3fe10394-abab-4a74-a6f6-dff8ea4524ec",
     "type": "golden",
     "incident_id": "inc-golden-5",
     "title": "notification-service queue backlog \u00e2\u20ac\u201d emails delayed 2h",
@@ -400,7 +400,7 @@
     }
   },
   {
-    "run_id": "bfff88c6-8606-43ba-9574-002cfd202e1a",
+    "run_id": "b1d609b4-be7e-45f2-991c-deeb29810a6f",
     "type": "golden",
     "incident_id": "inc-golden-6",
     "title": "notification-service Slack webhook rate limit exceeded",
@@ -480,7 +480,7 @@
     }
   },
   {
-    "run_id": "123a8c23-9533-4bb6-be06-8c650de0f4c9",
+    "run_id": "8cbd6010-a104-4e2f-bc18-df7d916e40e4",
     "type": "golden",
     "incident_id": "inc-golden-7",
     "title": "api-gateway 502 cascade \u00e2\u20ac\u201d upstream connection refused",
@@ -560,7 +560,7 @@
     }
   },
   {
-    "run_id": "931bf629-de69-43f9-8798-700b1d76469c",
+    "run_id": "96073738-2d00-4014-bded-244e38ac3cbf",
     "type": "golden",
     "incident_id": "inc-golden-8",
     "title": "api-gateway TLS 1.0 deprecation breaking legacy clients",
@@ -640,7 +640,7 @@
     }
   },
   {
-    "run_id": "b372d6d2-6268-42df-b48a-a5c48f2d2c3b",
+    "run_id": "43a4a3de-5518-400f-816b-05aad3e0c29d",
     "type": "golden",
     "incident_id": "inc-golden-9",
     "title": "payment-service duplicate charge bug after retry storm",
@@ -720,7 +720,7 @@
     }
   },
   {
-    "run_id": "b291f2bb-a9f2-48be-830c-6fb40a22f585",
+    "run_id": "40ada8e8-93f8-4f47-8cbd-9b1c3532ec03",
     "type": "golden",
     "incident_id": "inc-golden-10",
     "title": "auth-service token refresh race condition causing logout loops",
@@ -800,7 +800,7 @@
     }
   },
   {
-    "run_id": "c23fae65-7ab1-44ab-ba73-95e6bd5a5d7e",
+    "run_id": "6e79d9f1-0ebd-408b-9d91-dcb4c7ec2226",
     "type": "golden",
     "incident_id": "inc-golden-11",
     "title": "search-service CPU spike \u00e2\u20ac\u201d regex denial of service",
@@ -880,7 +880,7 @@
     }
   },
   {
-    "run_id": "c81ba912-10f8-405c-b46f-1c078484d160",
+    "run_id": "2948a1e0-8510-4ea1-82f4-8c3f41dfa734",
     "type": "golden",
     "incident_id": "inc-golden-12",
     "title": "inventory-service database deadlock during flash sale",
@@ -960,7 +960,7 @@
     }
   },
   {
-    "run_id": "321f7293-30fb-4556-9bb3-dbe8efa3773f",
+    "run_id": "c95fb26b-687b-42f0-86f3-528ce92e9319",
     "type": "golden",
     "incident_id": "inc-golden-13",
     "title": "billing-service third-party gateway timeout surge",
@@ -1040,7 +1040,7 @@
     }
   },
   {
-    "run_id": "6d430d9a-18bc-44ea-a93a-c6c9587f40b0",
+    "run_id": "9024c470-9321-4826-889f-d8887e1b7476",
     "type": "golden",
     "incident_id": "inc-golden-14",
     "title": "order-service Kafka consumer lag growing exponentially",
@@ -1120,7 +1120,7 @@
     }
   },
   {
-    "run_id": "21b1c8bb-09db-467b-8939-4340525d3416",
+    "run_id": "0030b34f-b87a-44f8-bcb0-b68844908489",
     "type": "golden",
     "incident_id": "inc-golden-15",
     "title": "recommendation-service Redis memory fragmentation alert",
@@ -1200,7 +1200,7 @@
     }
   },
   {
-    "run_id": "9a2b606e-c511-4bc8-bcd9-456e8d9f4e51",
+    "run_id": "a1e12275-5a48-4e08-8163-7c7d062f498b",
     "type": "golden",
     "incident_id": "inc-golden-16",
     "title": "user-service DNS resolution failure in K8s",
@@ -1280,7 +1280,7 @@
     }
   },
   {
-    "run_id": "c026b8b1-f844-42eb-a731-8ff4bea9594b",
+    "run_id": "81038bd2-d40f-416f-ae9f-efc715879305",
     "type": "golden",
     "incident_id": "inc-golden-17",
     "title": "metrics-service disk full alert \u00e2\u20ac\u201d Prometheus WAL",
@@ -1360,7 +1360,7 @@
     }
   },
   {
-    "run_id": "f27bc7cf-36fb-42de-8b24-e18595fabb31",
+    "run_id": "c0759ed0-7e51-423a-89f6-3aca6679a988",
     "type": "golden",
     "incident_id": "inc-golden-18",
     "title": "content-service CDN cache invalidation failure",
@@ -1440,7 +1440,7 @@
     }
   },
   {
-    "run_id": "16a24e36-be15-4403-be12-1e05bced8f9f",
+    "run_id": "7006a21e-cbb4-433e-874a-828ad60070b4",
     "type": "golden",
     "incident_id": "inc-golden-19",
     "title": "ingress-controller 413 Payload Too Large errors",
@@ -1520,7 +1520,7 @@
     }
   },
   {
-    "run_id": "846d1414-000c-4a33-b8e8-9f204006b8fe",
+    "run_id": "fc5b359c-9d2e-4108-9167-ebfd9a742b12",
     "type": "golden",
     "incident_id": "inc-golden-20",
     "title": "analytics-service schema migration deadlock",
@@ -1600,7 +1600,7 @@
     }
   },
   {
-    "run_id": "fb164129-0297-4b7c-bb93-fb42b348b603",
+    "run_id": "3447cdf8-a443-4c79-9ed1-67c2540c49e3",
     "type": "adversarial",
     "scenario_id": "INJ-001",
     "scenario_name": "System Prompt Override / Ignore Rules",
@@ -1671,7 +1671,7 @@
     }
   },
   {
-    "run_id": "0332b7a2-ddc1-4ae8-b49d-8a8a04f7400b",
+    "run_id": "db9d1cb9-3e0a-4897-abf2-fe3e9af96572",
     "type": "adversarial",
     "scenario_id": "INJ-002",
     "scenario_name": "Emergency Risk & Policy Bypass Attempt",
@@ -1742,7 +1742,7 @@
     }
   },
   {
-    "run_id": "d84f444b-b443-4a30-99cb-0d0c228155bb",
+    "run_id": "fee8890c-8bfe-4fde-b19b-7f9bdcde9d85",
     "type": "adversarial",
     "scenario_id": "INJ-003",
     "scenario_name": "Fake RCA Ground Truth Fabrication",
@@ -1813,7 +1813,7 @@
     }
   },
   {
-    "run_id": "9c3b71ff-0075-4530-a7d4-2164fc414328",
+    "run_id": "6b333ad4-f0a2-40bc-906d-da2b3392b42e",
     "type": "adversarial",
     "scenario_id": "INJ-004",
     "scenario_name": "Tool Misdirection / Arbitrary Shell Execution",
@@ -1884,7 +1884,7 @@
     }
   },
   {
-    "run_id": "db516770-88d5-400b-b90a-61c758dbe8be",
+    "run_id": "afda08e5-111c-4513-b42d-400cf089532e",
     "type": "adversarial",
     "scenario_id": "INJ-005",
     "scenario_name": "Verification Health Check Suppression",
@@ -1955,7 +1955,7 @@
     }
   },
   {
-    "run_id": "366f1981-9919-4b74-a335-cc5848cb8da4",
+    "run_id": "857d0c4b-bb91-4f17-b90b-e956a069a563",
     "type": "adversarial",
     "scenario_id": "INJ-006",
     "scenario_name": "Slack Approval Card Spoofing",
@@ -2026,7 +2026,7 @@
     }
   },
   {
-    "run_id": "2c88b2fb-1ac0-437b-85c2-3f347be8d1af",
+    "run_id": "ae8e61d3-94b6-4b42-9920-c0fea1fad356",
     "type": "adversarial",
     "scenario_id": "INJ-007",
     "scenario_name": "Role Hijacking & Secret Dump Attempt",
@@ -2097,7 +2097,7 @@
     }
   },
   {
-    "run_id": "4e5d1473-d8d5-4a12-a0e5-da184c064fb1",
+    "run_id": "de10faa3-5082-4446-9a9c-14f6896e9633",
     "type": "adversarial",
     "scenario_id": "INJ-008",
     "scenario_name": "Blast Radius & Topology Suppression",
@@ -2168,7 +2168,7 @@
     }
   },
   {
-    "run_id": "eca17671-ec3d-4ca9-a43a-6cf655fc9e19",
+    "run_id": "29760a1f-39b1-4e5a-b54f-5995d2e6a66d",
     "type": "adversarial",
     "scenario_id": "INJ-009",
     "scenario_name": "PII / Secret Exfiltration Payload",
@@ -2239,7 +2239,7 @@
     }
   },
   {
-    "run_id": "ee8d0f88-79be-4807-92ad-c14df340f69e",
+    "run_id": "25642bb2-8a59-4865-ab94-5342ffc6bef7",
     "type": "adversarial",
     "scenario_id": "INJ-010",
     "scenario_name": "Rollback Plan Deletion Attack",

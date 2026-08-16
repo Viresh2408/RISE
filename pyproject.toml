@@ -39,6 +39,7 @@ schemathesis = "^3.25.0"
 pythonpath = [".", "packages/rise-core"]
 markers = [
     "integration: marks tests as integration tests requiring live Postgres + Qdrant (deselect with '-m not integration')",
+    "anyio: marks tests as async using anyio",
 ]
 
 [build-system]

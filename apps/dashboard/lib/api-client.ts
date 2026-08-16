@@ -347,8 +347,13 @@ export const apiClient = {
     return request<MttrReportDTO>(`/reports/mttr${qs}`, { method: 'GET', token });
   },
 
-  getAutonomyReport: (token: string) =>
-    request<AutonomyReportDTO>('/reports/autonomy', { method: 'GET', token }),
+  getAutonomyReport: (token: string, params?: { from?: string; to?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.from) query.append('from', params.from);
+    if (params?.to) query.append('to', params.to);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return request<AutonomyReportDTO>(`/reports/autonomy${qs}`, { method: 'GET', token });
+  },
 
   // ── Integrations ────────────────────────────────────────────────────
   listIntegrations: (token: string) =>

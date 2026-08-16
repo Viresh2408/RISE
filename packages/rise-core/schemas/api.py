@@ -260,13 +260,19 @@ class IntegrationConnectResponse(BaseModel):
 
 class MttrReportDTO(BaseModel):
     avg_mttr_minutes: float
+    overall_avg_minutes: Optional[float] = None
+    reduction_pct: Optional[float] = None
     trend: list[dict[str, Any]] = Field(default_factory=list)
+    data_points: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AutonomyReportDTO(BaseModel):
     auto_resolved_pct: float
     human_approved_pct: float
     rejected_pct: float
+    human_rejected_pct: Optional[float] = None
+    total_incidents: Optional[int] = None
+    by_severity: Optional[dict[str, int]] = None
 
 
 class WebhookIngestResponse(BaseModel):

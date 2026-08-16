@@ -34,6 +34,19 @@ build/
 *.key
 *.pfx
 *.crt
+*.p8
+*.pkcs12
+*.id_rsa
+*.id_ed25519
+
+# Local Databases
+*.db
+*.sqlite
+*.sqlite3
+rise_dev.db
+
+# TypeScript Build Cache
+*.tsbuildinfo
 
 # Terraform
 *.tfvars

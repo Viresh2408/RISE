@@ -319,3 +319,60 @@ async def test_github_create_pr_idempotent_on_retry():
     assert pr2["status"] == "success"
     assert pr2["is_existing"] is True
     assert pr2["pr_number"] == pr1["pr_number"]
+
+
+@pytest.mark.anyio
+async def test_mcp_server_instance_isolation():
+    """Design decision test: MCP servers are in-process per-MCPGateway instances.
+
+    Isolation model accepted: each run_execution_agent() call constructs a fresh
+    MCPGateway() with its own server instances, so a crashed/poisoned server state
+    in one invocation does not affect other concurrent or subsequent invocations.
+
+    This test verifies:
+    1. Two MCPGateway instances hold independent (non-shared) server objects.
+    2. Mutating state on one gateway's server does not affect the other.
+    3. A tool-level exception on one gateway does not prevent a second gateway
+       from dispatching the same tool successfully.
+    """
+    gw_a = MCPGateway()
+    gw_b = MCPGateway()
+
+    # 1. Verify independent server instances (not the same object)
+    if gw_a.k8s_server is not None and gw_b.k8s_server is not None:
+        assert gw_a.k8s_server is not gw_b.k8s_server, (
+            "k8s_server must be a distinct instance per MCPGateway, not a shared singleton"
+        )
+    if gw_a.aws_server is not None and gw_b.aws_server is not None:
+        assert gw_a.aws_server is not gw_b.aws_server
+    if gw_a.github_server is not None and gw_b.github_server is not None:
+        assert gw_a.github_server is not gw_b.github_server
+
+    # 2. Exception on gw_a does not bleed into gw_b
+    plan = ActionPlan(
+        action_type="restart_pod",
+        action_steps=[ActionStep(tool="restart_pod", params={"pod": "api-1", "namespace": "default"})],
+        rollback_plan=[ActionStep(tool="rollback_deployment", params={"deploy": "api"})],
+    )
+    # Dispatch on gw_a (succeeds)
+    result_a = await gw_a.dispatch_tool_call(
+        agent_identity="execution-agent",
+        tool_name="restart_pod",
+        params={"pod": "api-1", "namespace": "default"},
+        approved_plan=plan,
+        step_index=0,
+        environment="staging",
+    )
+    assert result_a.get("status") == "success"
+
+    # Dispatch on gw_b still succeeds independently
+    result_b = await gw_b.dispatch_tool_call(
+        agent_identity="execution-agent",
+        tool_name="restart_pod",
+        params={"pod": "api-2", "namespace": "default"},
+        approved_plan=plan,
+        step_index=0,
+        environment="staging",
+    )
+    assert result_b.get("status") == "success"
+

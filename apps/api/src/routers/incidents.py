@@ -236,25 +236,27 @@ def _generate_code_fix_snippet(incident_title: str, incident_desc: str, service_
             "Initialize shared global ConnectionPool (max 50) and reuse active socket connections",
             "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
         ]
-    elif "sse" in title_lower or "socket" in title_lower or "descriptor" in title_lower or "notification" in title_lower:
+    elif "webhook" in title_lower or "replay" in title_lower or "stripe" in title_lower:
         file_path = "apps/api/src/routers/webhooks.py"
-        lines = "L48-L58"
+        lines = "L93-L103"
         github_url = f"https://github.com/Viresh2408/RISE/blob/main/{file_path}#{lines}"
         diff = (
             f"// Repository: RISE/{file_path} ({lines})\n"
-            "@@ -48,6 +48,11 @@ async def event_stream_listener(request: Request):\n"
-            "-    # Dangling connection loop without disconnect detection\n"
-            "-    while True:\n"
-            "-        await asyncio.sleep(1)\n"
-            "+    # Active client disconnect detector & TCP socket cleanup\n"
-            "+    while not await request.is_disconnected():\n"
-            "+        await asyncio.sleep(5)\n"
-            "+        yield f': keepalive\\n\\n'\n"
-            '+    logger.info("Client disconnected; recycled SSE socket descriptor")'
+            "@@ -93,10 +93,13 @@ async def _ingest(\n"
+            "     raw_body: bytes = await request.body()\n"
+            "\n"
+            "     # ── 2. Signature verification ──────────────────────────────────────────\n"
+            "+    # Constant-time HMAC replay window filter with atomic nonce acquisition\n"
+            "     await verifier.verify(request, raw_body)\n"
+            "\n"
+            "     # ── 3. Parse JSON body ─────────────────────────────────────────────────\n"
+            "     try:\n"
+            "         payload: Dict[str, Any] = json.loads(raw_body)\n"
+            "+        if redis_client: await register_dedup(redis_client, source=source, raw_body=raw_body)"
         )
         steps = [
-            f"Identify zombie socket descriptor leak in repository: RISE/{file_path} ({lines})",
-            "Implement active TCP half-close detection with is_disconnected() loop and keepalive reaping",
+            f"Trace webhook ingestion flow in repository: RISE/{file_path} ({lines})",
+            "Enforce distributed nonce deduplication before routing to Ingestion Agent",
             "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
         ]
     elif "auth" in title_lower or "latency" in title_lower or "jwk" in title_lower:
@@ -276,22 +278,27 @@ def _generate_code_fix_snippet(incident_title: str, incident_desc: str, service_
         ]
     else:
         file_path = "packages/rise-core/db/session.py"
-        lines = "L8-L15"
+        lines = "L15-L26"
         github_url = f"https://github.com/Viresh2408/RISE/blob/main/{file_path}#{lines}"
         diff = (
             f"// Repository: RISE/{file_path} ({lines})\n"
-            "@@ -8,7 +8,8 @@\n"
-            " DATABASE_URL = os.getenv(\n"
-            '     "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/rise_dev"\n'
-            " )\n"
-            "\n"
-            "-engine = create_engine(DATABASE_URL, pool_pre_ping=True)\n"
-            "+engine = create_engine(DATABASE_URL, pool_size=30, max_overflow=20, pool_recycle=1800, pool_pre_ping=True)\n"
-            " SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)"
+            "@@ -15,10 +15,12 @@ def _init_engine():\n"
+            '     if "postgresql" in DATABASE_URL:\n'
+            "         try:\n"
+            "+            # Scaled connection pool with auto-reconnect pre-ping & leak listener cleanup\n"
+            "             test_engine = create_engine(\n"
+            "                 DATABASE_URL,\n"
+            "-                pool_size=5,\n"
+            "-                max_overflow=5,\n"
+            "+                pool_size=25,\n"
+            "+                max_overflow=25,\n"
+            "                 pool_pre_ping=True,\n"
+            "                 pool_recycle=1800,\n"
+            "                 connect_args={\"connect_timeout\": 5},"
         )
         steps = [
             f"Identify connection pool bottleneck in repository: RISE/{file_path} ({lines})",
-            "Expand SQLAlchemy connection pool size to 30 with pool recycling and overflow handling",
+            "Expand SQLAlchemy connection pool size to 25 with pre-ping validation and pool recycling",
             "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
         ]
 

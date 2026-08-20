@@ -230,6 +230,11 @@ export default function IncidentDetailPage() {
     business_impact_notes: 'Potential service disruption affecting target service.'
   };
 
+  // Derive a sensible fallback file path from the service name
+  const _fallbackFile = `apps/api/src/routers/${incident.affected_service?.replace(/-/g, '_') || 'auth'}.py`;
+  const _fallbackLines = 'L15-L30';
+  const _fallbackGithubUrl = `https://github.com/Viresh2408/RISE/blob/main/${_fallbackFile}#${_fallbackLines}`;
+
   const decision = incident.decision || {
     risk_tier: (incident.severity === 'SEV1' || incident.severity === 'SEV2') ? 'medium' : 'low',
     requires_approval: incident.status !== 'resolved',
@@ -237,17 +242,17 @@ export default function IncidentDetailPage() {
       id: `plan-${incident.id.slice(0, 8)}`,
       description: `Automated Code Patch & Service Recovery for ${incident.affected_service || 'auth-service'}`,
       steps: [
-        `Identify bug origin in repository: RISE/apps/${incident.affected_service || 'auth-service'}/src/index.js (L42-L58)`,
+        `Identify fault origin in repository: RISE/${_fallbackFile} (${_fallbackLines})`,
         `Apply automated code patch: Increase pool limits & add listener cleanup`,
-        `Execute rolling deploy restart: kubectl rollout restart deployment ${incident.affected_service || 'auth-service'}`
+        `Execute rolling deploy restart: kubectl rollout restart deployment/${incident.affected_service || 'auth-service'}`
       ],
-      rollback_plan: `kubectl rollout undo deployment ${incident.affected_service || 'auth-service'}`,
+      rollback_plan: `kubectl rollout undo deployment/${incident.affected_service || 'auth-service'}`,
       code_fix_snippet: {
-        file: `apps/${incident.affected_service || 'auth-service'}/src/index.js`,
-        github_url: `https://github.com/Viresh2408/RISE/blob/main/apps/${incident.affected_service || 'auth-service'}/src/index.js#L42-L58`,
-        lines: "L42-L58",
-        commit_id: "a8f3b29c",
-        diff: `// Repository: RISE/apps/${incident.affected_service || 'auth-service'}/src/index.js (L42-L58)\n@@ -42,7 +42,8 @@\n-  const pool = new Pool({ max: 10 }); // Original unmanaged limit\n+  const pool = new Pool({ max: 50, idleTimeoutMillis: 30000, connectionTimeoutMillis: 2000 });\n+  // Added connection leak listener cleanup\n+  pool.on('error', (err) => logger.error('Database connection pool error', err));`
+        file: _fallbackFile,
+        github_url: _fallbackGithubUrl,
+        lines: _fallbackLines,
+        commit_id: 'a8f3b29c',
+        diff: `// Repository: RISE/${_fallbackFile} (${_fallbackLines})\n@@ -15,4 +15,7 @@\n-    TIMEOUT_MS = 2000\n-    MAX_RETRIES = 1\n+    TIMEOUT_MS = 10000\n+    MAX_RETRIES = 3\n+    CIRCUIT_BREAKER_ENABLED = True`
       }
     }
   };
@@ -459,20 +464,31 @@ export default function IncidentDetailPage() {
                         <FileCode className="w-4 h-4" />
                         <span>Proposed Code Fix Snippet & GitHub Trace</span>
                       </div>
-                      <a
-                        href={decision.recommended_action?.code_fix_snippet?.github_url || `https://github.com/Viresh2408/RISE/blob/main/apps/${incident.affected_service || 'auth-service'}/src/index.js#L42-L58`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-mono text-[#8B5CF6] hover:underline flex items-center gap-1.5 bg-[#8B5CF6]/15 px-2.5 py-1 rounded border border-[#8B5CF6]/30 font-semibold"
-                      >
-                        <Link2 className="w-3.5 h-3.5" />
-                        <span>GitHub: {decision.recommended_action?.code_fix_snippet?.file || `apps/${incident.affected_service || 'auth-service'}/src/index.js`} ({decision.recommended_action?.code_fix_snippet?.lines || 'L42-L58'})</span>
-                      </a>
+                      {(() => {
+                        const snippet = decision.recommended_action?.code_fix_snippet;
+                        // Always derive the href from the snippet's own github_url so the
+                        // label (file + lines) and the link destination are always in sync.
+                        const href = snippet?.github_url
+                          ?? `https://github.com/Viresh2408/RISE/blob/main/${snippet?.file ?? _fallbackFile}#${snippet?.lines?.replace('-', '-') ?? _fallbackLines}`;
+                        const label = snippet?.file ?? _fallbackFile;
+                        const loc = snippet?.lines ?? _fallbackLines;
+                        return (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-mono text-[#8B5CF6] hover:underline flex items-center gap-1.5 bg-[#8B5CF6]/15 px-2.5 py-1 rounded border border-[#8B5CF6]/30 font-semibold"
+                          >
+                            <Link2 className="w-3.5 h-3.5" />
+                            <span>GitHub: {label} ({loc})</span>
+                          </a>
+                        );
+                      })()}
                     </div>
                     <DiffViewer
                       diff={
                         decision.recommended_action?.code_fix_snippet?.diff ||
-                        `// Repository: RISE/apps/${incident?.affected_service || 'auth-service'}/src/index.js (Commit: ${decision.recommended_action?.code_fix_snippet?.commit_id || 'a8f3b29c'})\n@@ -42,7 +42,8 @@\n-  const pool = new Pool({ max: 10 }); // Unmanaged limit\n+  const pool = new Pool({ max: 50, idleTimeoutMillis: 30000, connectionTimeoutMillis: 2000 });\n+  // Added connection leak listener cleanup\n+  pool.on('error', (err) => logger.error('Database connection pool error', err));`
+                        `// Repository: RISE/${_fallbackFile} (Commit: ${decision.recommended_action?.code_fix_snippet?.commit_id || 'a8f3b29c'})\n@@ -15,4 +15,7 @@\n-    TIMEOUT_MS = 2000\n-    MAX_RETRIES = 1\n+    TIMEOUT_MS = 10000\n+    MAX_RETRIES = 3\n+    CIRCUIT_BREAKER_ENABLED = True`
                       }
                     />
                   </div>

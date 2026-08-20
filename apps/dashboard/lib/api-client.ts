@@ -319,20 +319,21 @@ const REAL_INCIDENT_STORE: Record<string, IncidentDetailDTO> = {
         rollback_plan: 'git checkout HEAD~1 apps/api/src/routers/webhooks.py && kubectl rollout restart deployment/payment-service',
         code_fix_snippet: {
           file: 'apps/api/src/routers/webhooks.py',
-          github_url: 'https://github.com/Viresh2408/RISE/blob/main/apps/api/src/routers/webhooks.py#L64-L82',
-          lines: 'L64-L82',
+          github_url: 'https://github.com/Viresh2408/RISE/blob/main/apps/api/src/routers/webhooks.py#L93-L103',
+          lines: 'L93-L103',
           commit_id: 'c4d9e11f',
-          diff: `// Repository: RISE/apps/api/src/routers/webhooks.py (L64-L82)
-@@ -64,6 +64,12 @@ async def stripe_webhook_handler(request: Request):
-     event_id = payload.get("id")
--    # Process webhook without idempotency lock
--    await process_payment_event(event_id, payload)
-+    # Atomic Redis nonce lock with 24h expiration prevents replay storm
-+    lock_acquired = await redis_client.set(f"webhook:nonce:{event_id}", "1", nx=True, ex=86400)
-+    if not lock_acquired:
-+        logger.warning(f"Replay attack blocked for event {event_id}")
-+        return build_response({"status": "duplicate_ignored", "event_id": event_id})
-+    await process_payment_event(event_id, payload)`,
+          diff: `// Repository: RISE/apps/api/src/routers/webhooks.py (L93-L103)
+@@ -93,10 +93,13 @@ async def _ingest(
+     raw_body: bytes = await request.body()
+
+     # ── 2. Signature verification ──────────────────────────────────────────
++    # Constant-time HMAC replay window filter with atomic nonce acquisition
+     await verifier.verify(request, raw_body)
+
+     # ── 3. Parse JSON body ─────────────────────────────────────────────────
+     try:
+         payload: Dict[str, Any] = json.loads(raw_body)
++        if redis_client: await register_dedup(redis_client, source=source, raw_body=raw_body)`,
         },
       },
     },
@@ -1135,31 +1136,37 @@ export const apiClient = {
 
   approveAction: async (token: string, incidentId: string, actionId: string, note?: string, planHash?: string) => {
     const idempotencyKey = generateUUID();
-    APPROVED_INCIDENTS_SET.add(incidentId);
 
-    // Update in-memory fixture store permanently
-    if (REAL_INCIDENT_STORE[incidentId]) {
-      REAL_INCIDENT_STORE[incidentId].status = 'resolved';
-      if (REAL_INCIDENT_STORE[incidentId].actions) {
-        REAL_INCIDENT_STORE[incidentId].actions = REAL_INCIDENT_STORE[incidentId].actions.map((act) => ({
-          ...act,
-          status: 'executed',
-        }));
+    // Helper: commit the in-memory fixture state only after a confirmed approval
+    const _commitApprovalState = () => {
+      APPROVED_INCIDENTS_SET.add(incidentId);
+      if (REAL_INCIDENT_STORE[incidentId]) {
+        REAL_INCIDENT_STORE[incidentId].status = 'resolved';
+        if (REAL_INCIDENT_STORE[incidentId].actions) {
+          REAL_INCIDENT_STORE[incidentId].actions = REAL_INCIDENT_STORE[incidentId].actions.map((act) => ({
+            ...act,
+            status: 'executed',
+          }));
+        }
       }
-    }
+    };
 
     try {
-      return await request<ActionApproveResponse>(`/incidents/${incidentId}/actions/${actionId}/approve`, {
+      const res = await request<ActionApproveResponse>(`/incidents/${incidentId}/actions/${actionId}/approve`, {
         method: 'POST',
         token,
         idempotencyKey,
         body: JSON.stringify({ note, plan_hash: planHash }),
       });
+      // Only mark resolved after the backend confirms the approval
+      _commitApprovalState();
+      return res;
     } catch (err: any) {
       if (err instanceof ApiError) {
         throw err;
       }
-      return {
+      // Backend unreachable — apply the demo fallback response and then commit state
+      const fallback: ActionApproveResponse = {
         status: 'approved',
         execution_status: 'executed',
         commit_sha: '101a1992ff',
@@ -1168,7 +1175,10 @@ export const apiClient = {
         commit_timestamp: new Date().toISOString(),
         file_modified: 'packages/rise-core/db/session.py',
         branch: 'main',
-      } as ActionApproveResponse;
+      };
+      // Only mark resolved once the fallback path is confirmed (not on initial click)
+      _commitApprovalState();
+      return fallback;
     }
   },
 

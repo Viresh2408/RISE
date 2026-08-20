@@ -145,10 +145,10 @@ def has_real_llm_credentials() -> bool:
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     openai_key = os.environ.get("OPENAI_API_KEY", "")
     
-    # Return True if we have a key that doesn't look like the default template placeholder
-    if gemini_key and "your_gemini_api_key" not in gemini_key:
+    # Return True if we have a key that doesn't look like the default template placeholder or test dummy
+    if gemini_key and "your_gemini_api_key" not in gemini_key and not gemini_key.startswith("test-") and gemini_key != "dummy":
         return True
-    if openai_key and "your_openai_api_key" not in openai_key:
+    if openai_key and "your_openai_api_key" not in openai_key and not openai_key.startswith("test-") and not openai_key.startswith("sk-test") and openai_key != "dummy":
         return True
     return False
 

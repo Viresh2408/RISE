@@ -151,6 +151,13 @@ class ActionApproveRequest(BaseModel):
 class ActionApproveResponse(BaseModel):
     status: str
     execution_status: str
+    commit_sha: Optional[str] = None
+    commit_url: Optional[str] = None
+    commit_message: Optional[str] = None
+    commit_timestamp: Optional[str] = None
+    file_modified: Optional[str] = None
+    branch: Optional[str] = None
+    pr_url: Optional[str] = None
 
 
 class ActionExecuteRequest(BaseModel):

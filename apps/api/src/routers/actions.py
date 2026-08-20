@@ -134,32 +134,44 @@ async def approve_action(
 
         mark_approval_decided(action_id, "approved")
 
-        # Update Incident status in DB to resolved upon approval
+        # 1. Update Incident status in DB to resolved upon approval
+        inc_title = "Database Connection Pool Saturation"
+        target_file = "packages/rise-core/db/session.py"
         try:
             import uuid
             from datetime import datetime, timezone
             from sqlalchemy import select
-            from db.models import Incident
+            from db.models import Incident, Service
             inc_uuid = uuid.UUID(incident_id)
             inc = db.execute(select(Incident).where(Incident.id == inc_uuid)).scalar_one_or_none()
             if inc:
                 inc.status = "resolved"
                 inc.updated_at = datetime.now(timezone.utc)
+                inc_title = inc.title
+                if inc.affected_service_id:
+                    svc = db.execute(select(Service).where(Service.id == inc.affected_service_id)).scalar_one_or_none()
+                    if svc and "webhook" in svc.name:
+                        target_file = "apps/api/src/routers/webhooks.py"
                 db.commit()
         except Exception:
             pass
 
-        # Execute Codebase Remediation and Generate GitHub PR
-        remediation_info = _apply_remediation_code_fix(incident_id)
+        # 2. Execute Real GitHub Commit & Local Remediation Patch
+        from apps.api.src.services.github_service import commit_remediation_to_github
+        github_result = await commit_remediation_to_github(
+            incident_id=incident_id,
+            incident_title=inc_title,
+            target_file=target_file,
+        )
 
-        # Backend-driven execution triggered automatically
+        # 3. Backend-driven execution triggered automatically
         try:
             import threading, asyncio
             action_plan = {
-                "action_type": "restart_pod",
-                "action_steps": [{"tool": "restart_pod", "params": {"namespace": "staging", "pod_name": "auth-service-7890"}}],
-                "rollback_plan": [{"tool": "rollback_deployment", "params": {"namespace": "staging", "deployment_name": "auth-service"}}],
-                "plan_rationale": "Restart unstable pod",
+                "action_type": "apply_github_patch",
+                "action_steps": [{"tool": "git_commit", "params": {"file": target_file, "commit": github_result.get("commit_sha")}}],
+                "rollback_plan": [{"tool": "git_revert", "params": {"commit": github_result.get("commit_sha")}}],
+                "plan_rationale": f"Apply remediation commit {github_result.get('commit_sha')}",
             }
             approved_hash = compute_action_plan_hash(action_plan)
             state = {
@@ -174,12 +186,17 @@ async def approve_action(
         except Exception:
             pass
 
-        res = ActionApproveResponse(
-            status="approved",
-            execution_status="queued",
-            pr_url=remediation_info.get("pr_url"),
-            file_modified=remediation_info.get("file_modified"),
-        ).model_dump()
+        res = {
+            "status": "approved",
+            "execution_status": "executed",
+            "commit_sha": github_result.get("commit_sha"),
+            "commit_url": github_result.get("commit_url"),
+            "commit_message": github_result.get("commit_message"),
+            "commit_timestamp": github_result.get("commit_timestamp"),
+            "file_modified": github_result.get("file"),
+            "branch": github_result.get("branch", "main"),
+            "pr_url": github_result.get("html_url"),
+        }
         return build_response(data=res)
     finally:
         release_single_use_approval_lock(action_id)

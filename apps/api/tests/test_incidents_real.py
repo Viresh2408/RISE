@@ -368,9 +368,23 @@ def test_hash_chain_verification_and_tamper_detection():
 
 import threading
 
-PG_TEST_URL = os.environ.get("PG_TEST_URL", "postgresql://postgres:postgres@localhost:5432/rise_dev")
+PG_TEST_URL = os.environ.get("PG_TEST_URL")
 SKIP_PG = False
 SKIP_REASON = ""
+
+if not PG_TEST_URL:
+    SKIP_PG = True
+    SKIP_REASON = "PG_TEST_URL is not set"
+else:
+    try:
+        from sqlalchemy import create_engine as _create_engine, text as _text
+        _test_eng = _create_engine(PG_TEST_URL, connect_args={"connect_timeout": 2})
+        with _test_eng.connect() as _c:
+            _c.execute(_text("SELECT 1"))
+    except Exception:
+        SKIP_PG = True
+        SKIP_REASON = "PostgreSQL at PG_TEST_URL is not accessible"
+
 
 
 @pytest.mark.skipif(SKIP_PG, reason=SKIP_REASON)

@@ -136,7 +136,14 @@ export interface IncidentDetailDTO extends IncidentDTO {
 
 export interface ActionApproveResponse {
   status: 'approved';
-  execution_status: 'queued' | 'completed' | string;
+  execution_status: 'queued' | 'completed' | 'executed' | string;
+  commit_sha?: string;
+  commit_url?: string;
+  commit_message?: string;
+  commit_timestamp?: string;
+  file_modified?: string;
+  branch?: string;
+  pr_url?: string;
 }
 
 export interface ActionRejectResponse {

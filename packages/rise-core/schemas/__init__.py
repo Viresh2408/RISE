@@ -38,6 +38,22 @@ from .agent_state import (
 )
 
 __all__ = [
+    # API Schemas
+    "ActionApproveRequest",
+    "ActionApproveResponse",
+    "ActionExecuteRequest",
+    "ActionExecuteResponse",
+    "ActionModifyRequest",
+    "ActionModifyResponse",
+    "ActionPlanDTO",
+    "ActionRejectRequest",
+    "ActionRejectResponse",
+    "DecisionDTO",
+    "RemediationActionDTO",
+    "IncidentCreateRequest",
+    "IncidentUpdateRequest",
+    "IncidentDTO",
+    "IncidentDetailDTO",
     # Enumerations
     "SeverityHint",
     "Severity",

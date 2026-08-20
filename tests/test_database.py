@@ -46,6 +46,8 @@ from db.models import (
 SUPERUSER_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/rise_dev")
 APP_USER_URL = os.getenv("APP_DATABASE_URL", "postgresql://rise_app:rise_app_pass@localhost:5432/rise_dev")
 
+pytestmark = pytest.mark.integration
+
 engine_super = create_engine(SUPERUSER_URL, pool_pre_ping=True)
 SessionSuper = sessionmaker(autocommit=False, autoflush=False, bind=engine_super)
 

@@ -95,6 +95,38 @@ function RiskTierBadge({ tier }: { tier: RiskTier }) {
   );
 }
 
+/* ── Syntax-Highlighted Git Diff Viewer ── */
+function DiffViewer({ diff }: { diff: string }) {
+  const lines = diff.split('\n');
+  return (
+    <div className="rounded-lg bg-[#05040A] border border-[#E8E2D9]/10 font-mono text-xs overflow-x-auto divide-y divide-white/[0.03]">
+      {lines.map((line, idx) => {
+        let lineStyle = 'text-[#E8E2D9]/80';
+        let bgStyle = 'bg-transparent';
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          lineStyle = 'text-[#4ADE80] font-medium';
+          bgStyle = 'bg-[#22C55E]/10';
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          lineStyle = 'text-[#F87171] font-medium';
+          bgStyle = 'bg-[#EF4444]/10';
+        } else if (line.startsWith('@@')) {
+          lineStyle = 'text-[#A78BFA] font-semibold';
+          bgStyle = 'bg-[#8B5CF6]/10';
+        } else if (line.startsWith('//') || line.startsWith('#')) {
+          lineStyle = 'text-[#6B6560] italic';
+        }
+
+        return (
+          <div key={idx} className={`px-3.5 py-1.5 flex items-start gap-3 ${bgStyle}`}>
+            <span className="select-none text-[10px] text-[#6B6560]/60 w-6 text-right tabular-nums pt-0.5">{idx + 1}</span>
+            <span className={`flex-1 whitespace-pre leading-relaxed ${lineStyle}`}>{line}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function IncidentDetailPage() {
   const { id } = useParams() as { id: string };
   const { session } = useAuth();
@@ -437,16 +469,12 @@ export default function IncidentDetailPage() {
                         <span>GitHub: {decision.recommended_action?.code_fix_snippet?.file || `apps/${incident.affected_service || 'auth-service'}/src/index.js`} ({decision.recommended_action?.code_fix_snippet?.lines || 'L42-L58'})</span>
                       </a>
                     </div>
-                    <pre className="p-3.5 rounded-lg bg-[#05040A] border border-[#E8E2D9]/10 font-mono text-xs text-[#E8E2D9] overflow-x-auto leading-relaxed">
-                      <code>
-{decision.recommended_action?.code_fix_snippet?.diff || `// Repository: RISE/apps/${incident?.affected_service || 'auth-service'}/src/index.js (Commit: ${decision.recommended_action?.code_fix_snippet?.commit_id || 'a8f3b29c'})
-@@ -42,7 +42,8 @@
--  const pool = new Pool({ max: 10 }); // Unmanaged limit
-+  const pool = new Pool({ max: 50, idleTimeoutMillis: 30000, connectionTimeoutMillis: 2000 });
-+  // Added connection leak listener cleanup
-+  pool.on('error', (err) => logger.error('Database connection pool error', err));`}
-                      </code>
-                    </pre>
+                    <DiffViewer
+                      diff={
+                        decision.recommended_action?.code_fix_snippet?.diff ||
+                        `// Repository: RISE/apps/${incident?.affected_service || 'auth-service'}/src/index.js (Commit: ${decision.recommended_action?.code_fix_snippet?.commit_id || 'a8f3b29c'})\n@@ -42,7 +42,8 @@\n-  const pool = new Pool({ max: 10 }); // Unmanaged limit\n+  const pool = new Pool({ max: 50, idleTimeoutMillis: 30000, connectionTimeoutMillis: 2000 });\n+  // Added connection leak listener cleanup\n+  pool.on('error', (err) => logger.error('Database connection pool error', err));`
+                      }
+                    />
                   </div>
 
                   {decision.recommended_action.rollback_plan && (

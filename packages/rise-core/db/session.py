@@ -16,7 +16,12 @@ def _init_engine():
     if "postgresql" in DATABASE_URL:
         try:
             # 2-second timeout to check local PostgreSQL status
-            test_engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args={"connect_timeout": 2})
+            test_engine = create_engine(
+        pool_size=30,
+        max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+DATABASE_URL, pool_pre_ping=True, connect_args={"connect_timeout": 2})
             with test_engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             return test_engine

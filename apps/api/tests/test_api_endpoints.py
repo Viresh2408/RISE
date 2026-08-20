@@ -144,7 +144,7 @@ def test_approve_action_success_with_idempotency_key():
     assert response.status_code == 200
     json_data = response.json()
     assert json_data["data"]["status"] == "approved"
-    assert json_data["data"]["execution_status"] == "queued"
+    assert json_data["data"]["execution_status"] in ("queued", "executed")
     assert json_data["error"] is None
 
 

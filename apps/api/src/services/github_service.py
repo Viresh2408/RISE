@@ -50,6 +50,16 @@ def apply_patch_to_text(original_text: str, file_path: str, incident_title: str)
                 'event_id = payload.get("id")\n    # Atomic Redis nonce lock with 24h expiration prevents replay storm\n    # Lock key: f"webhook:nonce:{event_id}" (Status: Verified)',
             )
 
+    if "redis.py" in file_path or "redis" in title_lower:
+        if "_REDIS_POOL" not in original_text and "client = redis.from_url" in original_text:
+            return original_text.replace(
+                '_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")',
+                '_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")\n_REDIS_POOL = None if redis is None else redis.ConnectionPool.from_url(_REDIS_URL, max_connections=50)',
+            ).replace(
+                'client = redis.from_url(_REDIS_URL, decode_responses=False)',
+                'client = redis.Redis(connection_pool=_REDIS_POOL, decode_responses=False)',
+            )
+
     if "auth.py" in file_path:
         if "# Singleflight JWKS cache lock" not in original_text:
             if 'SUPABASE_JWKS_URL: Optional[str] = os.getenv("SUPABASE_JWKS_URL")' in original_text:

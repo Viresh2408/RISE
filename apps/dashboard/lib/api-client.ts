@@ -100,6 +100,15 @@ async function request<T>(
 
 export const DEMO_INCIDENTS: IncidentDTO[] = [
   {
+    id: 'inc-redis-pool-09',
+    title: 'Redis Client Connection Storm & TCP Socket Churn in api-gateway',
+    severity: 'SEV1',
+    status: 'awaiting_approval',
+    affected_service: 'api-gateway',
+    created_at: new Date(Date.now() - 5 * 60000).toISOString(),
+    description: 'Unpooled redis.from_url() instantiated a new TCP handshake on every incoming API request. Under 2,500 req/s load, Redis client connection churn exhausted local ephemeral TCP ports, triggering 500 internal server errors.',
+  },
+  {
     id: 'inc-auth-pool-01',
     title: 'PostgreSQL Connection Pool Saturation in auth-service',
     severity: 'SEV1',
@@ -833,6 +842,92 @@ const REAL_INCIDENT_STORE: Record<string, IncidentDetailDTO> = {
         { name: 'Active socket descriptor table', result: 'pass', value: '1,420 / 65,535 (Safe)' },
         { name: 'Real-time alert delivery latency (P99)', result: 'pass', value: '28ms (Target: <50ms)' },
         { name: 'Gateway 504/RST error rate', result: 'pass', value: '0.00% (Normal)' },
+      ],
+    },
+  },
+
+  'inc-redis-pool-09': {
+    id: 'inc-redis-pool-09',
+    title: 'Redis Client Connection Storm & TCP Socket Churn in api-gateway',
+    severity: 'SEV1',
+    status: 'awaiting_approval',
+    affected_service: 'api-gateway',
+    created_at: new Date(Date.now() - 5 * 60000).toISOString(),
+    description: 'Unpooled redis.from_url() instantiated a new TCP handshake on every incoming API request. Under 2,500 req/s load, Redis client connection churn exhausted local ephemeral TCP ports, triggering 500 internal server errors.',
+    timeline: [
+      { timestamp: new Date(Date.now() - 15 * 60000).toISOString(), event: 'Traffic Surge', text: 'Ingress request rate climbed from 450 req/s to 2,500 req/s' },
+      { timestamp: new Date(Date.now() - 12 * 60000).toISOString(), event: 'TCP Port Exhaustion Alert', text: 'Linux kernel TIME_WAIT socket count exceeded 28,000 on api-gateway pods' },
+      { timestamp: new Date(Date.now() - 9 * 60000).toISOString(), event: 'Root Cause Identified', text: 'FastAPI dependency get_redis_client in apps/api/src/deps/redis.py creating unpooled connections' },
+      { timestamp: new Date(Date.now() - 5 * 60000).toISOString(), event: 'Remediation Formulated', text: 'Injecting global Redis ConnectionPool (max_connections=50) to reuse persistent TCP connections' },
+    ],
+    root_cause: {
+      cause: 'Unpooled Redis Client Instantiation per Request in Dependency Factory',
+      confidence: 0.96,
+      explanation: 'Every request calling get_redis_client() executed redis.from_url(), creating a fresh TCP handshake and teardown. Under high concurrency, ephemeral ports became exhausted in TIME_WAIT state.',
+      evidence: [
+        { id: 'ev-91', source: 'Prometheus Node Exporter', type: 'port_exhaustion', description: 'node_netstat_Tcp_CurrEstab + TIME_WAIT reached 28,400 sockets' },
+        { id: 'ev-92', source: 'GitHub Source Trace', type: 'code_defect', description: 'apps/api/src/deps/redis.py lines 28-32 instantiate standalone client instead of ConnectionPool' },
+      ],
+      similar_incidents: [
+        { id: 'inc-past-001', title: 'PostgreSQL connection churn in auth-service', similarity: 0.94 },
+      ],
+    },
+    impact: {
+      blast_radius: ['api-gateway', 'auth-service', 'webhooks-service', 'dashboard-web'],
+      severity: 'SEV1',
+      estimated_users_affected: 18500,
+      business_impact_notes: 'API gateway 500 error rate spiked to 19.4% during peak authentication and webhook traffic.',
+    },
+    decision: {
+      risk_tier: 'high',
+      confidence: 0.96,
+      requires_approval: true,
+      recommended_action: {
+        id: 'act-redis-pool-09',
+        description: 'Initialize Global Redis ConnectionPool & Reuse Persistent TCP Sockets',
+        steps: [
+          'Update apps/api/src/deps/redis.py (L20-L33) to initialize _REDIS_POOL with max_connections=50',
+          'Switch get_redis_client() to instantiate from connection pool',
+          'Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload',
+        ],
+        rollback_plan: 'git checkout HEAD~1 apps/api/src/deps/redis.py && uvicorn apps.api.src.main:app --reload',
+        code_fix_snippet: {
+          file: 'apps/api/src/deps/redis.py',
+          github_url: 'https://github.com/Viresh2408/RISE/blob/main/apps/api/src/deps/redis.py#L20-L33',
+          lines: 'L20-L33',
+          commit_id: 'a91b4e2f',
+          diff: `// Repository: RISE/apps/api/src/deps/redis.py (L20-L33)
+@@ -20,13 +20,16 @@
+ _REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
++_REDIS_POOL = None if redis is None else redis.ConnectionPool.from_url(_REDIS_URL, max_connections=50)
+ 
+ def get_redis_client() -> Generator[Any, None, None]:
+     if redis is None:
+         yield None
+         return
+-    client = redis.from_url(_REDIS_URL, decode_responses=False)
++    client = redis.Redis(connection_pool=_REDIS_POOL, decode_responses=False)
+     try:
+         yield client`,
+        },
+      },
+    },
+    actions: [
+      {
+        id: 'act-redis-pool-09',
+        incident_id: 'inc-redis-pool-09',
+        name: 'Deploy Persistent Redis ConnectionPool Patch to api-gateway',
+        risk_tier: 'high',
+        status: 'pending_approval',
+      },
+    ],
+    approvals: [],
+    verification: {
+      status: 'pending',
+      checks: [
+        { name: 'Redis TCP connection count', result: 'pass', value: '48 persistent sockets (Pool active)' },
+        { name: 'Gateway 500 error rate', result: 'pass', value: '0.00% (Baseline restored)' },
+        { name: 'Redis command latency (P99)', result: 'pass', value: '1.4ms (Target: <5ms)' },
       ],
     },
   },

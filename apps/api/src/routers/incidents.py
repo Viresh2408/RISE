@@ -212,27 +212,28 @@ def _parse_uuid(id_str: str) -> uuid.UUID:
 def _generate_code_fix_snippet(incident_title: str, incident_desc: str, service_name: str) -> dict:
     title_lower = (incident_title + " " + incident_desc).lower()
 
-    if "memory" in title_lower or "oom" in title_lower:
+    if "redis" in title_lower or "memory" in title_lower or "churn" in title_lower:
         file_path = "apps/api/src/deps/redis.py"
-        lines = "L20-L31"
+        lines = "L20-L33"
         github_url = f"https://github.com/Viresh2408/RISE/blob/main/{file_path}#{lines}"
         diff = (
             f"// Repository: RISE/{file_path} ({lines})\n"
-            "@@ -20,8 +20,11 @@\n"
+            "@@ -20,13 +20,16 @@\n"
             ' _REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")\n'
+            '+_REDIS_POOL = None if redis is None else redis.ConnectionPool.from_url(_REDIS_URL, max_connections=50)\n'
             "\n"
             " def get_redis_client() -> Generator[Any, None, None]:\n"
+            "     if redis is None:\n"
+            "         yield None\n"
+            "         return\n"
             "-    client = redis.from_url(_REDIS_URL, decode_responses=False)\n"
-            "+    pool = redis.ConnectionPool.from_url(_REDIS_URL, max_connections=20)\n"
-            "+    client = redis.Redis(connection_pool=pool, decode_responses=False)\n"
+            "+    client = redis.Redis(connection_pool=_REDIS_POOL, decode_responses=False)\n"
             "     try:\n"
-            "         yield client\n"
-            "+    finally:\n"
-            "+        client.close() # Connection pool cleanup preventing memory leak"
+            "         yield client"
         )
         steps = [
-            f"Identify memory leak in repository: RISE/{file_path} ({lines})",
-            "Replace unpooled connection instantiation with managed ConnectionPool and teardown cleanup",
+            f"Identify unpooled Redis client instantiation in repository: RISE/{file_path} ({lines})",
+            "Initialize shared global ConnectionPool (max 50) and reuse active socket connections",
             "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
         ]
     elif "sse" in title_lower or "socket" in title_lower or "descriptor" in title_lower or "notification" in title_lower:

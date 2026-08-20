@@ -254,7 +254,8 @@ def _verify_token(token: str) -> dict:
             },
         }
 
-    if RISE_TEST_MODE:
+    test_mode = os.getenv("RISE_TEST_MODE", "1" if RISE_TEST_MODE else "0") == "1"
+    if test_mode:
         try:
             return _decode_without_verification(token)
         except jwt.DecodeError as exc:
@@ -263,9 +264,10 @@ def _verify_token(token: str) -> dict:
                 detail={"code": "UNAUTHORIZED", "message": f"Malformed JWT: {exc}", "details": {}},
             ) from exc
 
-    if SUPABASE_JWT_SECRET:
+    secret = os.getenv("SUPABASE_JWT_SECRET", SUPABASE_JWT_SECRET)
+    if secret:
         try:
-            return _verify_token_hs256(token, SUPABASE_JWT_SECRET)
+            return _verify_token_hs256(token, secret)
         except jwt.ExpiredSignatureError as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

@@ -162,6 +162,15 @@ export const DEMO_INCIDENTS: IncidentDTO[] = [
     created_at: new Date(Date.now() - 4 * 60000).toISOString(),
     description: 'Un-hashed multi-key MGET pipeline across Redis cluster shards triggered CROSSSLOT Keys in request do not hash to the same slot exceptions. Cart checkout failure rate rose to 24.8%.',
   },
+  {
+    id: 'inc-sse-zombie-08',
+    title: 'SSE Heartbeat Socket Desync & File Descriptor Exhaustion in notification-hub',
+    severity: 'SEV1',
+    status: 'awaiting_approval',
+    affected_service: 'notification-hub',
+    created_at: new Date(Date.now() - 2 * 60000).toISOString(),
+    description: 'Server-Sent Events streaming handler omitted client half-close cleanup during mobile network flapping. 45,000 dangling socket descriptors saturated ulimit, causing 100% gateway connection rejection on real-time alerts.',
+  },
 ];
 
 const REAL_INCIDENT_STORE: Record<string, IncidentDetailDTO> = {
@@ -741,6 +750,89 @@ const REAL_INCIDENT_STORE: Record<string, IncidentDetailDTO> = {
       checks: [
         { name: 'Redis CROSSSLOT error rate', result: 'pass', value: '0 errors / min' },
         { name: 'Checkout completion success rate', result: 'pass', value: '99.8% (Target: >99.5%)' },
+      ],
+    },
+  },
+
+  'inc-sse-zombie-08': {
+    id: 'inc-sse-zombie-08',
+    title: 'SSE Heartbeat Socket Desync & File Descriptor Exhaustion in notification-hub',
+    severity: 'SEV1',
+    status: 'awaiting_approval',
+    affected_service: 'notification-hub',
+    created_at: new Date(Date.now() - 2 * 60000).toISOString(),
+    description: 'Server-Sent Events streaming handler omitted client half-close cleanup during mobile network flapping. 45,000 dangling socket descriptors saturated ulimit, causing 100% gateway connection rejection on real-time alerts.',
+    timeline: [
+      { timestamp: new Date(Date.now() - 10 * 60000).toISOString(), event: 'Socket Table Alarm', text: 'Prometheus node_sockstat_TCP_inuse surged past 50,000 on notification-hub' },
+      { timestamp: new Date(Date.now() - 8 * 60000).toISOString(), event: 'OS Kernel EMFILE Alert', text: 'Kernel reported ulimit (65,535 file descriptors) saturated; new TCP handshakes dropped with RST' },
+      { timestamp: new Date(Date.now() - 5 * 60000).toISOString(), event: 'Root Cause Synthesized', text: 'FastAPI EventSource generator lacked is_disconnected() loop check on client half-close' },
+      { timestamp: new Date(Date.now() - 2 * 60000).toISOString(), event: 'Remediation Formulated', text: 'Injecting active request.is_disconnected() liveness check & 15s keepalive ping reaper' },
+    ],
+    root_cause: {
+      cause: 'Uncancelled Asyncio SSE Generators on Mobile Client Half-Close Disconnects',
+      confidence: 0.95,
+      explanation: 'Under cellular network flapping, mobile clients disconnected without sending TCP FIN. Because the SSE generator lacked an await request.is_disconnected() guard, server coroutines held open file descriptors indefinitely until pod OS limits were exhausted.',
+      evidence: [
+        { id: 'ev-81', source: 'Prometheus Node Exporter', type: 'descriptor_leak', description: 'node_filefd_allocated spiked to 65,420/65,535 (99.8% ulimit capacity)' },
+        { id: 'ev-82', source: 'Uvicorn Access Traces', type: 'socket_leak', description: 'GET /api/v1/stream/events active connections = 45,210 with zero outbound packets for >600s' },
+      ],
+      similar_incidents: [
+        { id: 'inc-past-028', title: 'WebSocket zombie connection leak in live-chat', similarity: 0.92 },
+      ],
+    },
+    impact: {
+      blast_radius: ['notification-hub', 'api-gateway', 'dashboard-web', 'mobile-push-relay'],
+      severity: 'SEV1',
+      estimated_users_affected: 14200,
+      business_impact_notes: 'Operators and end-users experiencing real-time incident alert delays (>45s latency) and browser socket reconnect storms.',
+    },
+    decision: {
+      risk_tier: 'high',
+      confidence: 0.95,
+      requires_approval: true,
+      recommended_action: {
+        id: 'act-sse-zombie-08',
+        description: 'Deploy Async SSE Heartbeat with Keepalive Disconnection Loop & TCP Socket Recycle',
+        steps: [
+          'Inject request.is_disconnected() guard into apps/api/src/routers/webhooks.py (L48-L58)',
+          'Add 15s keepalive ping reaper to terminate silent half-closed client streams',
+          'Execute rolling pod restart: kubectl rollout restart deployment/notification-hub',
+        ],
+        rollback_plan: 'git revert HEAD && kubectl rollout restart deployment/notification-hub',
+        code_fix_snippet: {
+          file: 'apps/api/src/routers/webhooks.py',
+          github_url: 'https://github.com/Viresh2408/RISE/blob/main/apps/api/src/routers/webhooks.py#L48-L58',
+          lines: 'L48-L58',
+          commit_id: 'e4f8c21a',
+          diff: `// Repository: RISE/apps/api/src/routers/webhooks.py (L48-L58)
+@@ -48,6 +48,11 @@ async def event_stream_listener(request: Request):
+-    # Dangling connection loop without disconnect detection
+-    while True:
+-        await asyncio.sleep(1)
++    # Active client disconnect detector & TCP socket cleanup
++    while not await request.is_disconnected():
++        await asyncio.sleep(5)
++        yield f": keepalive\\n\\n"
++    logger.info("Client disconnected; recycled SSE socket descriptor")`,
+        },
+      },
+    },
+    actions: [
+      {
+        id: 'act-sse-zombie-08',
+        incident_id: 'inc-sse-zombie-08',
+        name: 'Deploy Async SSE Heartbeat & Socket Reaper Patch to notification-hub',
+        risk_tier: 'high',
+        status: 'pending_approval',
+      },
+    ],
+    approvals: [],
+    verification: {
+      status: 'pending',
+      checks: [
+        { name: 'Active socket descriptor table', result: 'pass', value: '1,420 / 65,535 (Safe)' },
+        { name: 'Real-time alert delivery latency (P99)', result: 'pass', value: '28ms (Target: <50ms)' },
+        { name: 'Gateway 504/RST error rate', result: 'pass', value: '0.00% (Normal)' },
       ],
     },
   },

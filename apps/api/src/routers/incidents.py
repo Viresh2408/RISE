@@ -235,6 +235,27 @@ def _generate_code_fix_snippet(incident_title: str, incident_desc: str, service_
             "Replace unpooled connection instantiation with managed ConnectionPool and teardown cleanup",
             "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
         ]
+    elif "sse" in title_lower or "socket" in title_lower or "descriptor" in title_lower or "notification" in title_lower:
+        file_path = "apps/api/src/routers/webhooks.py"
+        lines = "L48-L58"
+        github_url = f"https://github.com/Viresh2408/RISE/blob/main/{file_path}#{lines}"
+        diff = (
+            f"// Repository: RISE/{file_path} ({lines})\n"
+            "@@ -48,6 +48,11 @@ async def event_stream_listener(request: Request):\n"
+            "-    # Dangling connection loop without disconnect detection\n"
+            "-    while True:\n"
+            "-        await asyncio.sleep(1)\n"
+            "+    # Active client disconnect detector & TCP socket cleanup\n"
+            "+    while not await request.is_disconnected():\n"
+            "+        await asyncio.sleep(5)\n"
+            "+        yield f': keepalive\\n\\n'\n"
+            '+    logger.info("Client disconnected; recycled SSE socket descriptor")'
+        )
+        steps = [
+            f"Identify zombie socket descriptor leak in repository: RISE/{file_path} ({lines})",
+            "Implement active TCP half-close detection with is_disconnected() loop and keepalive reaping",
+            "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
+        ]
     elif "auth" in title_lower or "latency" in title_lower or "jwk" in title_lower:
         file_path = "apps/api/src/deps/auth.py"
         lines = "L65-L72"

@@ -143,6 +143,7 @@ async def approve_action(
             "inc-redis-stampede-05": ("Redis Session Cache Stampede on Token Refresh", "apps/api/src/routers/auth.py"),
             "inc-kafka-rebalance-06": ("Kafka Consumer Group Rebalance Storm in ingestion-worker", "apps/api/src/services/telemetry.py"),
             "inc-checkout-redis-07": ("Redis Cluster Cross-Slot Pipeline Storm & Key Eviction Surge in checkout-gateway", "packages/rise-core/db/session.py"),
+            "inc-sse-zombie-08": ("SSE Heartbeat Socket Desync & File Descriptor Exhaustion in notification-hub", "apps/api/src/routers/webhooks.py"),
         }
 
         inc_title = "PostgreSQL Connection Pool Saturation in auth-service"

@@ -135,26 +135,45 @@ async def approve_action(
         mark_approval_decided(action_id, "approved")
 
         # 1. Update Incident status in DB to resolved upon approval
-        inc_title = "Database Connection Pool Saturation"
+        DEMO_INCIDENT_MAP = {
+            "inc-auth-pool-01": ("PostgreSQL Connection Pool Saturation in auth-service", "packages/rise-core/db/session.py"),
+            "inc-auth-latency-02": ("P99 Latency Spike on /auth/verify-token via JWKS Fetch", "apps/api/src/deps/auth.py"),
+            "inc-stripe-replay-03": ("Stripe Webhook Idempotency Key Replay Storm", "apps/api/src/routers/webhooks.py"),
+            "inc-ddos-ratelimit-04": ("DDoS Rate Limit Bypass on User Login", "apps/api/src/middleware/rate_limit.py"),
+            "inc-redis-stampede-05": ("Redis Session Cache Stampede on Token Refresh", "apps/api/src/routers/auth.py"),
+            "inc-kafka-rebalance-06": ("Kafka Consumer Group Rebalance Storm in ingestion-worker", "apps/api/src/services/telemetry.py"),
+            "inc-checkout-redis-07": ("Redis Cluster Cross-Slot Pipeline Storm & Key Eviction Surge in checkout-gateway", "packages/rise-core/db/session.py"),
+        }
+
+        inc_title = "PostgreSQL Connection Pool Saturation in auth-service"
         target_file = "packages/rise-core/db/session.py"
-        try:
-            import uuid
-            from datetime import datetime, timezone
-            from sqlalchemy import select
-            from db.models import Incident, Service
-            inc_uuid = uuid.UUID(incident_id)
-            inc = db.execute(select(Incident).where(Incident.id == inc_uuid)).scalar_one_or_none()
-            if inc:
-                inc.status = "resolved"
-                inc.updated_at = datetime.now(timezone.utc)
-                inc_title = inc.title
-                if inc.affected_service_id:
-                    svc = db.execute(select(Service).where(Service.id == inc.affected_service_id)).scalar_one_or_none()
-                    if svc and "webhook" in svc.name:
-                        target_file = "apps/api/src/routers/webhooks.py"
-                db.commit()
-        except Exception:
-            pass
+
+        if incident_id in DEMO_INCIDENT_MAP:
+            inc_title, target_file = DEMO_INCIDENT_MAP[incident_id]
+        else:
+            try:
+                import uuid
+                from datetime import datetime, timezone
+                from sqlalchemy import select
+                from db.models import Incident, Service
+                inc_uuid = uuid.UUID(incident_id)
+                inc = db.execute(select(Incident).where(Incident.id == inc_uuid)).scalar_one_or_none()
+                if inc:
+                    inc.status = "resolved"
+                    inc.updated_at = datetime.now(timezone.utc)
+                    inc_title = inc.title
+                    if inc.affected_service_id:
+                        svc = db.execute(select(Service).where(Service.id == inc.affected_service_id)).scalar_one_or_none()
+                        if svc:
+                            if "webhook" in svc.name or "stripe" in svc.name:
+                                target_file = "apps/api/src/routers/webhooks.py"
+                            elif "auth" in svc.name or "login" in svc.name:
+                                target_file = "apps/api/src/deps/auth.py"
+                            elif "checkout" in svc.name or "db" in svc.name:
+                                target_file = "packages/rise-core/db/session.py"
+                    db.commit()
+            except Exception:
+                pass
 
         # 2. Execute Real GitHub Commit & Local Remediation Patch
         from apps.api.src.services.github_service import commit_remediation_to_github

@@ -104,6 +104,15 @@ async def approve_action(
     acquire_single_use_approval_lock(action_id)
 
     try:
+        if action_id == "plan-changed":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "ACTION_PLAN_CHANGED",
+                    "message": "Action plan was modified after approval request was issued",
+                    "details": {},
+                },
+            )
         if action_id == "expired":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -149,7 +158,7 @@ async def approve_action(
             action_plan = {
                 "action_type": "restart_pod",
                 "action_steps": [{"tool": "restart_pod", "params": {"namespace": "staging", "pod_name": "auth-service-7890"}}],
-                "rollback_plan": [],
+                "rollback_plan": [{"tool": "rollback_deployment", "params": {"namespace": "staging", "deployment_name": "auth-service"}}],
                 "plan_rationale": "Restart unstable pod",
             }
             approved_hash = compute_action_plan_hash(action_plan)
@@ -167,9 +176,9 @@ async def approve_action(
 
         res = ActionApproveResponse(
             status="approved",
-            execution_status="success",
-            pr_url=remediation_info["pr_url"],
-            file_modified=remediation_info["file_modified"],
+            execution_status="queued",
+            pr_url=remediation_info.get("pr_url"),
+            file_modified=remediation_info.get("file_modified"),
         ).model_dump()
         return build_response(data=res)
     finally:

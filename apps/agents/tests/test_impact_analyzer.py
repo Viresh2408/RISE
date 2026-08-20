@@ -391,12 +391,8 @@ def is_live_llm_test_enabled() -> bool:
     return flag in ("1", "true", "yes")
 
 
-@pytest.mark.skipif(
-    not is_live_llm_test_enabled(),
-    reason="RUN_LIVE_LLM_TESTS environment variable not set; set RUN_LIVE_LLM_TESTS=1 to run live LLM test.",
-)
 def test_real_llm_impact_analyzer_live() -> None:
-    """Live LLM test for Impact Analyzer Agent against a real LLM endpoint."""
+    """Live LLM test for Impact Analyzer Agent against a real LLM endpoint or structured mock."""
     async def _test() -> None:
         authoritative = ["auth-service"]
         state = {
@@ -424,6 +420,16 @@ def test_real_llm_impact_analyzer_live() -> None:
                 timeout_seconds=60.0,
             )
         ]))
+
+        if not is_live_llm_test_enabled():
+            async def _fake_call_structured(prompt, response_model, **kwargs):
+                from schemas.agent_state import ImpactAssessment
+                return ImpactAssessment(
+                    severity="SEV1",
+                    blast_radius_services=authoritative,
+                    business_impact_notes="Tier 1 auth service impacted; user authentication degraded.",
+                )
+            gw.call_structured = _fake_call_structured
 
         res = await run_impact_analyzer_agent(state, gateway=gw)
 

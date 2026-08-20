@@ -73,7 +73,7 @@ def _build_dto(type_: str) -> dict:
 
 @router.get("")
 async def list_integrations(
-    user: UserContext = Depends(require_role("viewer")),
+    user: UserContext = Depends(require_role("admin")),
 ):
     """Return all integration cards with current connection status."""
     integrations = [_build_dto(t) for t in CATALOG]

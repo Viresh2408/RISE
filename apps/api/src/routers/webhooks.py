@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -251,14 +252,15 @@ async def _ingest(
         severity_hint=incident_event_schema.severity_hint,
     )
 
-    # ── Background agent graph pipeline execution ─────────────────────────
-    try:
-        from apps.agents.src.orchestrator.graph import run_incident
-        import asyncio
-        asyncio.create_task(asyncio.to_thread(run_incident, str(tenant_id), str(new_incident_id), payload))
-        logger.info("Launched background agent graph execution for incident_id=%s", new_incident_id)
-    except Exception as exc:
-        logger.warning("Failed launching background run_incident task: %s", exc)
+    # ── Background agent graph pipeline execution (opt-in for standalone demo) ──
+    if os.getenv("AUTO_RUN_AGENT_GRAPH", "0") == "1" and os.getenv("ENVIRONMENT") not in ("test", "ci"):
+        try:
+            from apps.agents.src.orchestrator.graph import run_incident
+            import asyncio
+            asyncio.create_task(asyncio.to_thread(run_incident, str(tenant_id), str(new_incident_id), payload))
+            logger.info("Launched background agent graph execution for incident_id=%s", new_incident_id)
+        except Exception as exc:
+            logger.warning("Failed launching background run_incident task: %s", exc)
 
     logger.info(
         "Webhook %s: incident created incident_id=%s resource_id=%r",

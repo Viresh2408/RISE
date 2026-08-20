@@ -32,8 +32,18 @@ def _parse_date(date_str: Optional[str], default_dt: datetime) -> datetime:
             return default_dt
 
 
+def _to_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _generate_dynamic_mttr_trend(start_dt: datetime, end_dt: datetime, base_incidents: List[Incident]) -> List[Dict[str, Any]]:
     """Generate 7 timeline data points spanning the requested date range."""
+    start_dt = _to_utc(start_dt) or start_dt
+    end_dt = _to_utc(end_dt) or end_dt
     total_seconds = (end_dt - start_dt).total_seconds()
     if total_seconds <= 0:
         end_dt = datetime.now(timezone.utc)
@@ -52,13 +62,17 @@ def _generate_dynamic_mttr_trend(start_dt: datetime, end_dt: datetime, base_inci
 
         matching = [
             inc for inc in base_incidents
-            if inc.created_at and interval_start <= inc.created_at <= interval_end
+            if inc.created_at and interval_start <= (_to_utc(inc.created_at) or inc.created_at) <= interval_end
         ]
 
         if matching:
             resolved = [inc for inc in matching if inc.resolved_at]
             if resolved:
-                durations = [(inc.resolved_at - inc.created_at).total_seconds() / 60.0 for inc in resolved if inc.resolved_at >= inc.created_at]
+                durations = [
+                    ((_to_utc(inc.resolved_at) or inc.resolved_at) - (_to_utc(inc.created_at) or inc.created_at)).total_seconds() / 60.0
+                    for inc in resolved
+                    if (_to_utc(inc.resolved_at) or inc.resolved_at) >= (_to_utc(inc.created_at) or inc.created_at)
+                ]
                 avg_m = round(sum(durations) / len(durations), 1) if durations else 8.5
             else:
                 avg_m = 9.0
@@ -86,8 +100,12 @@ async def get_mttr_report(
     end_dt = _parse_date(to_date, now)
 
     # Query DB incidents matching date range
-    stmt = select(Incident).where(Incident.created_at >= start_dt, Incident.created_at <= end_dt)
-    incidents = list(db.scalars(stmt).all())
+    try:
+        stmt = select(Incident).where(Incident.created_at >= start_dt, Incident.created_at <= end_dt)
+        incidents = list(db.scalars(stmt).all())
+    except Exception:
+        incidents = list(db.scalars(select(Incident)).all())
+        incidents = [i for i in incidents if i.created_at and start_dt <= (_to_utc(i.created_at) or i.created_at) <= end_dt]
 
     if service:
         svc_stmt = select(Service).where(Service.name.ilike(f"%{service}%"))
@@ -98,9 +116,15 @@ async def get_mttr_report(
     trend = _generate_dynamic_mttr_trend(start_dt, end_dt, incidents)
 
     if incidents:
-        resolved = [i for i in incidents if i.resolved_at and i.resolved_at >= i.created_at]
+        resolved = [
+            i for i in incidents
+            if i.resolved_at and (_to_utc(i.resolved_at) or i.resolved_at) >= (_to_utc(i.created_at) or i.created_at)
+        ]
         if resolved:
-            durations = [(i.resolved_at - i.created_at).total_seconds() / 60.0 for i in resolved]
+            durations = [
+                ((_to_utc(i.resolved_at) or i.resolved_at) - (_to_utc(i.created_at) or i.created_at)).total_seconds() / 60.0
+                for i in resolved
+            ]
             overall_avg = round(sum(durations) / len(durations), 1)
         else:
             overall_avg = round(trend[-1]["mttr_minutes"], 1)
@@ -139,8 +163,12 @@ async def get_autonomy_report(
     end_dt = _parse_date(to_date, now)
 
     # Query DB incidents matching date range
-    stmt = select(Incident).where(Incident.created_at >= start_dt, Incident.created_at <= end_dt)
-    incidents = list(db.scalars(stmt).all())
+    try:
+        stmt = select(Incident).where(Incident.created_at >= start_dt, Incident.created_at <= end_dt)
+        incidents = list(db.scalars(stmt).all())
+    except Exception:
+        incidents = list(db.scalars(select(Incident)).all())
+        incidents = [i for i in incidents if i.created_at and start_dt <= (_to_utc(i.created_at) or i.created_at) <= end_dt]
 
     total_count = len(incidents)
 

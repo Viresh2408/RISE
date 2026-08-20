@@ -97,7 +97,7 @@ def _openai_error(msg: str = "service unavailable") -> ProviderError:
 # Test 1: Primary provider succeeds — returns typed object
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_primary_success():
     gemini_adapter = AsyncMock()
     gemini_adapter.complete = AsyncMock(return_value=_raw(_VALID_JSON))
@@ -117,7 +117,7 @@ async def test_primary_success():
 # Test 2: Primary raises ProviderError → failover to secondary
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_primary_fails_triggers_failover():
     gemini_adapter = AsyncMock()
     gemini_adapter.complete = AsyncMock(side_effect=_gemini_error())
@@ -144,7 +144,7 @@ async def test_primary_fails_triggers_failover():
 # in ~0 s (the mock raises immediately once the timeout fires).
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_primary_timeout_triggers_failover():
     async def _hang_then_timeout(*_: Any, **__: Any) -> RawLLMResponse:
         # Simulate an adapter that blocks for longer than its timeout_seconds.
@@ -176,7 +176,7 @@ async def test_primary_timeout_triggers_failover():
 # Test 4: All providers fail → AllProvidersFailedError
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_all_providers_fail_raises():
     gemini_adapter = AsyncMock()
     gemini_adapter.complete = AsyncMock(side_effect=_gemini_error())
@@ -201,7 +201,7 @@ async def test_all_providers_fail_raises():
 # Test 5: Invalid JSON → exactly one repair call → repair succeeds
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_bad_json_triggers_one_repair_then_succeeds():
     gemini_adapter = AsyncMock()
     # First call: invalid JSON.  Second call (repair): valid JSON.
@@ -227,7 +227,7 @@ async def test_bad_json_triggers_one_repair_then_succeeds():
 #         (i.e. triggers failover to OpenAI, NOT StructuredOutputError)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_bad_json_repair_raises_provider_error_causes_failover():
     """If the repair call itself has a network failure, the error must propagate
     as ProviderError so the outer loop can fail over to the next provider.
@@ -276,7 +276,7 @@ async def test_bad_json_repair_raises_provider_error_causes_failover():
 # Test 7: Both original and repair calls return bad JSON → StructuredOutputError
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_bad_json_repair_fails_raises_clean_exception():
     gemini_adapter = AsyncMock()
     gemini_adapter.complete = AsyncMock(
@@ -302,7 +302,7 @@ async def test_bad_json_repair_fails_raises_clean_exception():
 # Test 8: Usage row logged with exact cost_usd
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_usage_logged_on_success():
     COST_IN = 0.000_001   # $0.000001 per input token
     COST_OUT = 0.000_002  # $0.000002 per output token

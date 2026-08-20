@@ -43,11 +43,11 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 
 # ── Dialect shims so Postgres-only columns work with SQLite ──────────────────
-@compiles(JSONB)
+@compiles(JSONB, "sqlite")
 def _jsonb_sqlite(element, compiler, **kw):
     return "JSON"
 
-@compiles(PG_UUID)
+@compiles(PG_UUID, "sqlite")
 def _uuid_sqlite(element, compiler, **kw):
     return "TEXT"
 
@@ -66,6 +66,7 @@ from apps.api.src.services.ingestion.signature_verifier import (
     FakeSNSVerifier,
     FakeFailVerifier,
     FakeVerifier,
+    RealSlackVerifier,
     get_alertmanager_verifier,
     get_github_verifier,
     get_slack_verifier,
@@ -125,10 +126,15 @@ def override_get_redis():
     yield redis_mock
 
 
-app.dependency_overrides[get_db] = override_get_db
-app.dependency_overrides[get_redis_client] = override_get_redis
+@pytest.fixture(autouse=True)
+def setup_webhooks_db():
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_redis_client] = override_get_redis
+    yield
+    app.dependency_overrides.clear()
 
-client = TestClient(app, raise_server_exceptions=False)
+
+client = TestClient(app, raise_server_exceptions=True)
 
 # A minimal valid IncidentEvent the mocked LLM returns for "happy path" tests.
 _GOOD_INCIDENT_EVENT = IncidentEvent(
@@ -295,6 +301,7 @@ class TestMalformedPayloadToDLQ:
 
     def setup_method(self):
         _reset_redis()
+        app.dependency_overrides[get_redis_client] = override_get_redis
         app.dependency_overrides[get_github_verifier] = lambda: FakeVerifier()
 
     def teardown_method(self):
@@ -371,6 +378,7 @@ class TestDedupWindowSingleIncident:
 
     def setup_method(self):
         _reset_redis()
+        app.dependency_overrides[get_redis_client] = override_get_redis
         app.dependency_overrides[get_github_verifier] = lambda: FakeVerifier()
         with TestingSessionLocal() as db:
             db.query(Incident).delete()
@@ -565,6 +573,7 @@ class TestPromptInjectionSchemaGuardrail:
 
     def setup_method(self):
         _reset_redis()
+        app.dependency_overrides[get_redis_client] = override_get_redis
         app.dependency_overrides[get_github_verifier] = lambda: FakeVerifier()
         with TestingSessionLocal() as db:
             _seed_integration(db, source="github", credential_ref="inj-org")
@@ -656,8 +665,8 @@ class TestSlackReplayWindow:
 
     def setup_method(self):
         _reset_redis()
-        # Use REAL RealSlackVerifier — remove any override that may exist
-        app.dependency_overrides.pop(get_slack_verifier, None)
+        app.dependency_overrides[get_redis_client] = override_get_redis
+        app.dependency_overrides[get_slack_verifier] = lambda: RealSlackVerifier(secret=self._SECRET)
 
     def teardown_method(self):
         app.dependency_overrides.pop(get_slack_verifier, None)
@@ -680,7 +689,7 @@ class TestSlackReplayWindow:
             },
         )
         # 400 = passed signature check, failed tenant resolution (expected)
-        assert resp.status_code == 400
+        assert resp.status_code == 400, f"Status: {resp.status_code}, Body: {resp.text}"
         assert resp.json()["error"]["code"] == "UNKNOWN_INTEGRATION_SOURCE"
 
     def test_expired_timestamp_rejected_with_401(self):

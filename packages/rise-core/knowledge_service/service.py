@@ -298,13 +298,36 @@ class KnowledgeService:
 
         qdrant_filter = qdrant_models.Filter(must=must_conditions)
 
-        hits = self._qdrant.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=query_vector,
-            query_filter=qdrant_filter,
-            limit=top_k,
-            with_payload=True,
-        )
+        try:
+            req = qdrant_models.SearchRequest(
+                vector=query_vector,
+                filter=qdrant_filter,
+                limit=top_k,
+                with_payload=True,
+            )
+            res = self._qdrant.http.search_api.search_points(
+                collection_name=COLLECTION_NAME,
+                search_request=req,
+            )
+            hits = res.result
+        except Exception:
+            if hasattr(self._qdrant, "query_points"):
+                response = self._qdrant.query_points(
+                    collection_name=COLLECTION_NAME,
+                    query=query_vector,
+                    query_filter=qdrant_filter,
+                    limit=top_k,
+                    with_payload=True,
+                )
+                hits = response.points
+            else:
+                hits = self._qdrant.search(
+                    collection_name=COLLECTION_NAME,
+                    query_vector=query_vector,
+                    query_filter=qdrant_filter,
+                    limit=top_k,
+                    with_payload=True,
+                )
 
         results: list[SimilarIncidentResult] = []
         for hit in hits:

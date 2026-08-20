@@ -135,6 +135,7 @@ class DecisionEngine:
         # (Rollback presence check; validity is backed up post-execution by Verification Agent)
         if not action_plan.requires_manual_plan and len(action_plan.rollback_plan) == 0:
             requires_approval = True
+            action_plan = action_plan.model_copy(update={"requires_manual_plan": True})
             logger.warning("GUARDRAIL: Action plan missing rollback_plan -> forcing requires_approval=True")
 
         # Guardrail 3: Manual plan requested forces requires_approval=True
@@ -152,9 +153,6 @@ class DecisionEngine:
         # Guardrail 6: Code fix PR requires mandatory human merge review
         if action_type == "code_fix_pr":
             requires_approval = True
-
-        if state.get("decision", {}).get("requires_approval") is False or state.get("requires_approval") is False:
-            requires_approval = False
 
         return Decision(
             risk_tier=risk_eval.risk_tier,

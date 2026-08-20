@@ -36,11 +36,11 @@ from sqlalchemy.types import JSON, String
 from sqlalchemy.pool import StaticPool
 
 # Register SQLite compilers for PostgreSQL-specific types JSONB and UUID
-@compiles(JSONB)
+@compiles(JSONB, "sqlite")
 def visit_JSONB(element, compiler, **kw):
     return "JSON"
 
-@compiles(PG_UUID)
+@compiles(PG_UUID, "sqlite")
 def visit_UUID(element, compiler, **kw):
     return "TEXT"
 
@@ -103,7 +103,12 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
+@pytest.fixture(autouse=True)
+def setup_incidents_db():
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+    app.dependency_overrides.clear()
+
 
 client = TestClient(app, raise_server_exceptions=True)
 
@@ -363,9 +368,9 @@ def test_hash_chain_verification_and_tamper_detection():
 
 import threading
 
-PG_TEST_URL = os.environ.get("PG_TEST_URL", "")
-SKIP_PG = not PG_TEST_URL
-SKIP_REASON = "PG_TEST_URL not set — requires a live Postgres instance to test SELECT FOR UPDATE"
+PG_TEST_URL = os.environ.get("PG_TEST_URL", "postgresql://postgres:postgres@localhost:5432/rise_dev")
+SKIP_PG = False
+SKIP_REASON = ""
 
 
 @pytest.mark.skipif(SKIP_PG, reason=SKIP_REASON)
@@ -508,9 +513,12 @@ def test_concurrent_post_incidents_produces_linear_audit_chain():
         # Clean up the test tenant to leave the DB tidy.
         cleanup_db = PgSession()
         try:
-            cleanup_db.execute(
-                Tenant.__table__.delete().where(Tenant.id == uuid.UUID(PG_TENANT_ID))
-            )
+            tid = uuid.UUID(PG_TENANT_ID)
+            cleanup_db.execute(AuditEvent.__table__.delete().where(AuditEvent.tenant_id == tid))
+            cleanup_db.execute(Incident.__table__.delete().where(Incident.tenant_id == tid))
+            cleanup_db.execute(Service.__table__.delete().where(Service.tenant_id == tid))
+            cleanup_db.execute(User.__table__.delete().where(User.tenant_id == tid))
+            cleanup_db.execute(Tenant.__table__.delete().where(Tenant.id == tid))
             cleanup_db.commit()
         finally:
             cleanup_db.close()

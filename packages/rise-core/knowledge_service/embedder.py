@@ -28,6 +28,12 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+try:
+    import pyarrow  # noqa: F401
+    import sentence_transformers  # noqa: F401
+except Exception:
+    pass
+
 
 @runtime_checkable
 class EmbedderProtocol(Protocol):
@@ -59,7 +65,7 @@ class SentenceTransformerEmbedder:
     _MODEL_NAME = "all-MiniLM-L6-v2"
 
     def __init__(self, model_name: str | None = None) -> None:
-        from sentence_transformers import SentenceTransformer  # lazy import
+        from sentence_transformers import SentenceTransformer
 
         self._model = SentenceTransformer(model_name or self._MODEL_NAME)
         self._vector_size: int = self._model.get_sentence_embedding_dimension()

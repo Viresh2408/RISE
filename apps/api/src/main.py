@@ -12,7 +12,7 @@ if str(rise_core_dir) not in sys.path:
 from dotenv import load_dotenv
 env_path = root_dir / ".env"
 if env_path.exists():
-    load_dotenv(dotenv_path=env_path, override=True)
+    load_dotenv(dotenv_path=env_path, override=False)
 
 
 

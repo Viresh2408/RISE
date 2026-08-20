@@ -13,6 +13,7 @@ AND updated_at < NOW() - 30s.
 Assertion: Must return EXACTLY 0 orphaned incidents.
 """
 
+import json
 import time
 import uuid
 from typing import Dict, List, Any
@@ -129,7 +130,7 @@ def test_chaos_scenario_llm_provider_outage_failover():
 
     class FailingPrimaryAdapter:
         async def complete(self, prompt: str) -> RawLLMResponse:
-            raise ProviderError("Gemini 503 Service Unavailable / Rate Limit Exceeded")
+            raise ProviderError("gemini", RuntimeError("Gemini 503 Service Unavailable / Rate Limit Exceeded"))
 
     class WorkingSecondaryAdapter:
         async def complete(self, prompt: str) -> RawLLMResponse:

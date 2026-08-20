@@ -23,15 +23,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 
-@compiles(JSONB)
+@compiles(JSONB, "sqlite")
 def _jsonb_sqlite(element, compiler, **kw):
     return "JSON"
 
-@compiles(PG_UUID)
+@compiles(PG_UUID, "sqlite")
 def _uuid_sqlite(element, compiler, **kw):
     return "TEXT"
 
-os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret-key")
+os.environ.setdefault("SUPABASE_JWT_SECRET", "test-supabase-secret-rise-unit-tests")
 os.environ.setdefault("SLACK_SIGNING_SECRET", "test-slack-signing-secret")
 
 from db.base import Base
@@ -84,9 +84,15 @@ def override_get_redis():
     yield redis_mock
 
 
-app.dependency_overrides[get_db] = override_get_db
-app.dependency_overrides[get_redis_client] = override_get_redis
-app.dependency_overrides[get_slack_verifier] = lambda: FakeVerifier()
+@pytest.fixture(autouse=True)
+def setup_slack_app_overrides():
+    reset_approval_locks_for_testing()
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_redis_client] = override_get_redis
+    app.dependency_overrides[get_slack_verifier] = lambda: FakeVerifier()
+    yield
+    app.dependency_overrides.clear()
+
 
 client = TestClient(app, raise_server_exceptions=False)
 

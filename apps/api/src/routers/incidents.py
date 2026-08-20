@@ -39,6 +39,7 @@ from db.models import (
     RemediationAction,
     RootCause,
     Service,
+    Tenant,
 )
 from schemas import (
     CommentCreateRequest,
@@ -656,6 +657,11 @@ async def create_incident(
 ):
     tenant_id = _parse_uuid(user.tenant_id)
     actor = f"user:{user.user_id}"
+
+    # Lock the tenant record FOR UPDATE on PostgreSQL to serialize concurrent requests
+    # and prevent FK ShareLock deadlocks before child inserts.
+    if db.bind and db.bind.dialect.name != "sqlite":
+        db.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
 
     # Resolve or auto-create the service (is_auto_created=True if new)
     svc = _resolve_service(db, tenant_id, req.affected_service)

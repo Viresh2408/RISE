@@ -107,7 +107,7 @@ async def test_dod2_modified_plan_hash_fires_action_plan_changed():
     approved_plan = ActionPlan(
         action_type="restart_pod",
         action_steps=[ActionStep(tool="restart_pod", params={"namespace": "staging", "pod_name": "auth-service-7890"})],
-        rollback_plan=[],
+        rollback_plan=[ActionStep(tool="rollback_deployment", params={"deploy": "auth-service"})],
         plan_rationale="Restart unstable pod",
     )
     original_hash = compute_action_plan_hash(approved_plan)
@@ -116,7 +116,7 @@ async def test_dod2_modified_plan_hash_fires_action_plan_changed():
     tampered_plan = ActionPlan(
         action_type="restart_pod",
         action_steps=[ActionStep(tool="restart_pod", params={"namespace": "staging", "pod_name": "auth-service-TAMPERED"})],
-        rollback_plan=[],
+        rollback_plan=[ActionStep(tool="rollback_deployment", params={"deploy": "auth-service"})],
         plan_rationale="Restart unstable pod",
     )
 
@@ -149,7 +149,7 @@ async def test_step_level_parameter_mismatch_blocked():
     approved_plan = ActionPlan(
         action_type="restart_pod",
         action_steps=[ActionStep(tool="restart_pod", params={"namespace": "staging", "pod_name": "auth-service-7890"})],
-        rollback_plan=[],
+        rollback_plan=[ActionStep(tool="rollback_deployment", params={"deploy": "auth-service"})],
         plan_rationale="Restart auth service pod",
     )
 
@@ -217,7 +217,7 @@ async def test_dod3_staging_kubernetes_restart_pod_end_to_end():
             ActionStep(tool="get_pod_status", params={"namespace": "staging", "pod_name": pod_name}),
             ActionStep(tool="restart_pod", params={"namespace": "staging", "pod_name": pod_name}),
         ],
-        rollback_plan=[],
+        rollback_plan=[ActionStep(tool="rollback_deployment", params={"deploy": "auth-service"})],
         plan_rationale="Restart unstable staging auth pod",
     )
     plan_hash = compute_action_plan_hash(approved_plan)
@@ -353,6 +353,7 @@ async def test_mcp_server_instance_isolation():
         action_type="restart_pod",
         action_steps=[ActionStep(tool="restart_pod", params={"pod": "api-1", "namespace": "default"})],
         rollback_plan=[ActionStep(tool="rollback_deployment", params={"deploy": "api"})],
+        plan_rationale="Restart API pod",
     )
     # Dispatch on gw_a (succeeds)
     result_a = await gw_a.dispatch_tool_call(
@@ -369,7 +370,7 @@ async def test_mcp_server_instance_isolation():
     result_b = await gw_b.dispatch_tool_call(
         agent_identity="execution-agent",
         tool_name="restart_pod",
-        params={"pod": "api-2", "namespace": "default"},
+        params={"pod": "api-1", "namespace": "default"},
         approved_plan=plan,
         step_index=0,
         environment="staging",

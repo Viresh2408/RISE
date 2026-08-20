@@ -24,7 +24,7 @@ def get_qdrant_client() -> QdrantClient:
     """
     url = os.getenv("QDRANT_URL", "http://localhost:6333")
     api_key = os.getenv("QDRANT_API_KEY") or None  # empty string → None
-    timeout = float(os.getenv("QDRANT_TIMEOUT", "1.0"))
+    timeout = float(os.getenv("QDRANT_TIMEOUT", "10.0"))
 
     return QdrantClient(url=url, api_key=api_key, timeout=timeout)
 

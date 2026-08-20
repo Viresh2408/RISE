@@ -430,8 +430,10 @@ class ActionPlan(BaseModel):
     @model_validator(mode="after")
     def rollback_plan_required_unless_manual(self) -> "ActionPlan":
         if not self.requires_manual_plan and len(self.rollback_plan) == 0:
-            # An empty rollback_plan automatically escalates to human review by marking manual plan required
-            self.requires_manual_plan = True
+            raise ValueError(
+                "rollback_plan must be non-empty unless requires_manual_plan=True. "
+                "Every automated action plan must include a rollback plan per guardrails."
+            )
         return self
 
 

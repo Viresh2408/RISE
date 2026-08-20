@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 # ── Set env BEFORE importing app so settings are picked up at module load ────
 TEST_JWT_SECRET = "test-supabase-secret-rise-unit-tests"
 os.environ.setdefault("SUPABASE_JWT_SECRET", TEST_JWT_SECRET)
+os.environ.setdefault("ENVIRONMENT", "test")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -27,16 +28,19 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 
-@compiles(JSONB)
+@compiles(JSONB, "sqlite")
 def visit_JSONB(element, compiler, **kw):
     return "JSON"
 
-@compiles(PG_UUID)
+@compiles(PG_UUID, "sqlite")
 def visit_UUID(element, compiler, **kw):
     return "TEXT"
 
+from unittest.mock import MagicMock
+
 from db.base import Base
 from apps.api.src.deps.db import get_db
+from apps.api.src.deps.redis import get_redis_client
 
 engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -49,11 +53,27 @@ def override_get_db():
     finally:
         db.close()
 
+_redis_mock = MagicMock()
+_redis_mock.get.return_value = None
+_redis_mock.set.return_value = True
+_redis_mock.setex.return_value = True
+_redis_mock.xadd.return_value = b"1-0"
+_redis_mock.delete.return_value = True
+
+def override_get_redis():
+    yield _redis_mock
+
 from apps.api.src.main import app
 
-app.dependency_overrides[get_db] = override_get_db
+@pytest.fixture(autouse=True)
+def setup_api_overrides():
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_redis_client] = override_get_redis
+    yield
+    app.dependency_overrides.clear()
 
-client = TestClient(app, raise_server_exceptions=False)
+
+client = TestClient(app, raise_server_exceptions=True)
 
 
 def _make_jwt(role: str = "admin") -> str:
@@ -195,8 +215,23 @@ def test_webhooks_without_jwt_auth(webhook_path: str):
         "alertmanager": {"groupLabels": {"cluster": "test-org"}},
     }
 
-    response = client.post(webhook_path, json=payloads[source])
-    assert response.status_code == 200
+    from schemas.agent_state import IncidentEvent
+    from unittest.mock import patch, AsyncMock
+    fake_event = IncidentEvent(
+        resource_id="svc-test",
+        source=source,
+        event_type="test_event",
+        severity_hint="SEV2",
+        summary="Test webhook event",
+        is_likely_duplicate=False,
+        duplicate_of_incident_id=None,
+        sanitization_flags=[],
+    )
+
+    with patch("apps.api.src.routers.webhooks.run_ingestion_agent", new_callable=AsyncMock, return_value=fake_event):
+        response = client.post(webhook_path, json=payloads[source])
+
+    assert response.status_code == 200, f"Error body: {response.text}"
     json_data = response.json()
     assert json_data["data"]["received"] is True
     assert json_data["error"] is None

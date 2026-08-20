@@ -152,27 +152,6 @@ def resolve_tenant_from_integration(
     )
     config = db.execute(stmt).scalar_one_or_none()
     if config is None:
-        env = os.getenv("ENVIRONMENT", "local").lower().strip()
-        if env in ("local", "dev", "development", "test", "ci"):
-            from db.models import Tenant
-            tenant = db.execute(select(Tenant).limit(1)).scalar_one_or_none()
-            if tenant is None:
-                tenant = Tenant(name="Local Dev Tenant")
-                db.add(tenant)
-                db.commit()
-                db.refresh(tenant)
-
-            config = IntegrationConfig(
-                tenant_id=tenant.id,
-                type=source,
-                status="active",
-                credential_ref=identifier,
-                scopes={"created_by": "local_dev_auto_seed"},
-            )
-            db.add(config)
-            db.commit()
-            return tenant.id
-
         logger.warning(
             "No IntegrationConfig found for source=%s identifier=%r — rejecting",
             source,

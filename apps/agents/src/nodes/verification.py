@@ -158,7 +158,7 @@ def evaluate_rule_based_verification(
         ),
     ]
 
-    exec_result_str = execution_log.get("result", "")
+    exec_result_str = execution_log.get("result") or ""
     if "Created PR:" in exec_result_str:
         pr_link = exec_result_str.split("Created PR:")[-1].strip()
         # Require a valid PR entity URL (/pull/\d+)
@@ -329,7 +329,7 @@ async def run_verification_agent(
     # Independent live GitHub API confirmation if PR was created
     pr_id = state.get("pr_number") or state.get("pr_url")
     if not pr_id:
-        exec_res = execution_log.get("result", "")
+        exec_res = execution_log.get("result") or ""
         if "Created PR:" in exec_res:
             pr_id = exec_res.split("Created PR:")[-1].strip()
 

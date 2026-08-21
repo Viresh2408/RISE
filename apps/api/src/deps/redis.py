@@ -18,6 +18,7 @@ except ImportError:
 
 
 _REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+_REDIS_POOL = None if redis is None else redis.ConnectionPool.from_url(_REDIS_URL, max_connections=50)
 
 
 def get_redis_client() -> Generator[Any, None, None]:
@@ -25,7 +26,7 @@ def get_redis_client() -> Generator[Any, None, None]:
     if redis is None:
         yield None
         return
-    client = redis.from_url(_REDIS_URL, decode_responses=False)
+    client = redis.Redis(connection_pool=_REDIS_POOL, decode_responses=False)
     try:
         yield client
     finally:

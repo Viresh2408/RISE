@@ -141,7 +141,9 @@ def test_root_cause_strong_evidence_mocked() -> None:
 # ---------------------------------------------------------------------------
 
 def has_real_llm_credentials() -> bool:
-    """Check if real LLM gateway credentials are set to non-dummy values."""
+    """Check if real LLM gateway credentials are set to non-dummy values and live tests are explicitly enabled."""
+    if os.environ.get("RISE_LIVE_LLM_TESTS") != "1":
+        return False
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     openai_key = os.environ.get("OPENAI_API_KEY", "")
     

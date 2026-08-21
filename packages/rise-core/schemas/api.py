@@ -158,6 +158,7 @@ class ActionApproveResponse(BaseModel):
     file_modified: Optional[str] = None
     branch: Optional[str] = None
     pr_url: Optional[str] = None
+    pr_number: Optional[int] = None
 
 
 class ActionExecuteRequest(BaseModel):

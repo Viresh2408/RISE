@@ -144,6 +144,7 @@ export interface ActionApproveResponse {
   file_modified?: string;
   branch?: string;
   pr_url?: string;
+  pr_number?: number;
 }
 
 export interface ActionRejectResponse {

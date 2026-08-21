@@ -60,20 +60,19 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
 
     try {
       const res: any = await apiClient.approveAction(activeToken, incidentId, action.id, note);
-      setSuccessAnim('approved');
-      if (res) {
-        setCommitResult(res);
+      if (res?.execution_status === 'failed' || res?.status === 'failed' || res?.success === false) {
+        setErrorBanner(res.message || res.error || 'GitHub remediation failed to execute or push.');
+        setCommitResult(null);
+      } else {
+        setSuccessAnim('approved');
+        if (res) {
+          setCommitResult(res);
+        }
       }
       onRefresh();
     } catch (err: any) {
-      try {
-        const res: any = await apiClient.approveAction(activeToken, incidentId, action.id, note, 'revalidated-hash');
-        setSuccessAnim('approved');
-        if (res) setCommitResult(res);
-        onRefresh();
-      } catch (innerErr: any) {
-        setErrorBanner(innerErr.message || 'Failed to approve action');
-      }
+      setErrorBanner(err.message || 'Failed to approve action');
+      setCommitResult(null);
     } finally {
       setLoading(false);
     }
@@ -158,22 +157,40 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
           <div className="rounded-xl border border-[#22C55E]/40 bg-[#0A1A12] p-5 space-y-4 shadow-xl animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between flex-wrap gap-3">
               <div className="flex items-center gap-2.5 text-xs font-mono font-bold text-[#4ADE80]">
-                <GitCommit className="w-4 h-4 text-[#22C55E]" />
-                <span>GitHub Remediation Commit Pushed</span>
+                <GitPullRequest className="w-4 h-4 text-[#22C55E]" />
+                <span>
+                  {commitResult.pr_number
+                    ? `GitHub Pull Request #${commitResult.pr_number} Pushed`
+                    : 'GitHub Remediation PR & Commit Pushed'}
+                </span>
                 <span className="rounded bg-[#22C55E]/20 px-2 py-0.5 text-[10px] text-[#22C55E] border border-[#22C55E]/30">
-                  {commitResult.branch || 'main'}
+                  {commitResult.branch || 'fix/remediation'}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <a
-                  href={commitResult.commit_url || `https://github.com/Viresh2408/RISE/commit/${commitResult.commit_sha || 'main'}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#22C55E] px-3.5 py-2 text-xs font-bold text-[#0E0B14] hover:bg-[#22C55E]/90 transition-all shadow"
-                >
-                  <span>Open Commit on GitHub</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
+              <div className="flex items-center gap-2 flex-wrap">
+                {commitResult.pr_url && (
+                  <a
+                    href={commitResult.pr_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#22C55E] px-3.5 py-2 text-xs font-bold text-[#0E0B14] hover:bg-[#22C55E]/90 transition-all shadow"
+                  >
+                    <GitPullRequest className="w-3.5 h-3.5" />
+                    <span>Open Pull Request on GitHub</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+                {commitResult.commit_url && (
+                  <a
+                    href={commitResult.commit_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#22C55E]/40 bg-[#0E0B14] px-3 py-2 text-xs font-bold text-[#22C55E] hover:bg-[#22C55E]/10 transition-all shadow"
+                  >
+                    <GitCommit className="w-3.5 h-3.5" />
+                    <span>View Commit</span>
+                  </a>
+                )}
               </div>
             </div>
 

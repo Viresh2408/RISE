@@ -383,6 +383,64 @@ def _compute_confidence(incident_title: str, incident_desc: str, severity: str) 
     return round(min(0.97, max(0.20, score)), 2)
 
 
+KNOWN_INCIDENTS_CATALOG: Dict[str, Dict[str, str]] = {
+    "inc-redis-pool-09": {
+        "title": "Redis Client Connection Storm & TCP Socket Churn in api-gateway",
+        "description": "Unpooled redis.from_url() instantiated a new TCP handshake on every incoming API request. Under 2,500 req/s load, Redis client connection churn exhausted local ephemeral TCP ports, triggering 500 internal server errors.",
+        "affected_service": "api-gateway",
+        "severity": "SEV1",
+    },
+    "inc-auth-pool-01": {
+        "title": "PostgreSQL Connection Pool Saturation in auth-service",
+        "description": "Surge in OAuth token requests saturated database connection pool (10/10 active connections). Connection leak in catch handler causing cascading 503 errors.",
+        "affected_service": "auth-service",
+        "severity": "SEV1",
+    },
+    "inc-pay-replay-02": {
+        "title": "Payment Webhook Duplicate Replay Attack & Rate Limit Trigger",
+        "description": "Stripe webhook receiver detected 450 duplicate payloads/sec with identical event IDs. Rate-limiter triggered 429s and double-charging ledger race condition prevented.",
+        "affected_service": "payment-service",
+        "severity": "SEV1",
+    },
+    "inc-k8s-ingress-03": {
+        "title": "Kubernetes Ingress 504 Gateway Timeout Cascade",
+        "description": "NGINX Ingress proxy_read_timeout (15s) mismatch with backend async uvicorn pool under sustained 12,000 req/min traffic surge.",
+        "affected_service": "api-gateway",
+        "severity": "SEV2",
+    },
+    "inc-report-oom-04": {
+        "title": "OOMKilled CrashLoopBackOff in PDF Analytics Worker",
+        "description": "Unclosed io.BytesIO canvas stream during weekly PDF generation caused container RSS memory to breach 512MB limit.",
+        "affected_service": "analytics-worker",
+        "severity": "SEV2",
+    },
+    "inc-redis-stampede-05": {
+        "title": "Redis Session Cache Stampede on Token Refresh",
+        "description": "Synchronized 3600s TTL expiration across 20,000 active sessions generated simultaneous cache miss wave against primary database.",
+        "affected_service": "auth-service",
+        "severity": "SEV2",
+    },
+    "inc-kafka-rebalance-06": {
+        "title": "Kafka Consumer Group Rebalance Storm in ingestion-worker",
+        "description": "Batch event processing time exceeded max.poll.interval.ms threshold, triggering endless partition rebalances and lag accumulation.",
+        "affected_service": "ingestion-worker",
+        "severity": "SEV3",
+    },
+    "inc-checkout-redis-07": {
+        "title": "Redis Cluster Cross-Slot Pipeline Storm & Key Eviction Surge in checkout-gateway",
+        "description": "Un-hashed multi-key MGET pipeline across Redis cluster shards triggered CROSSSLOT Keys in request do not hash to the same slot exceptions. Cart checkout failure rate rose to 24.8%.",
+        "affected_service": "checkout-gateway",
+        "severity": "SEV1",
+    },
+    "inc-sse-zombie-08": {
+        "title": "SSE Heartbeat Socket Desync & File Descriptor Exhaustion in notification-hub",
+        "description": "Server-Sent Events streaming handler omitted client half-close cleanup during mobile network flapping. 45,000 dangling socket descriptors saturated ulimit, causing 100% gateway connection rejection on real-time alerts.",
+        "affected_service": "notification-hub",
+        "severity": "SEV1",
+    },
+}
+
+
 @router.get("/{incident_id}")
 async def get_incident(
     incident_id: str,
@@ -403,57 +461,69 @@ async def get_incident(
         logger.warning("Failed querying incident %s: %s", incident_id, exc)
 
     if incident is None:
-        fix_info = _generate_code_fix_snippet("Database Connection Pool Exhausted", "High latency and socket timeouts", "auth-service")
+        cat_info = KNOWN_INCIDENTS_CATALOG.get(incident_id)
+        if cat_info:
+            inc_title = cat_info["title"]
+            inc_desc = cat_info["description"]
+            inc_service = cat_info["affected_service"]
+            inc_sev = cat_info["severity"]
+        else:
+            inc_title = f"Autonomous Incident Investigation #{incident_id}"
+            inc_desc = f"Service degradation and anomaly investigation workflow for incident {incident_id}."
+            inc_service = "api-service"
+            inc_sev = "SEV2"
+
+        fix_info = _generate_code_fix_snippet(inc_title, inc_desc, inc_service)
         demo_inc = IncidentDetailDTO(
             id=incident_id,
-            title="Database Connection Pool Exhausted",
-            description="High latency and connection pool exhaustion detected on auth-service.",
-            severity="SEV1",
+            title=inc_title,
+            description=inc_desc,
+            severity=inc_sev,
             status="awaiting_approval",
-            affected_service="auth-service",
+            affected_service=inc_service,
             created_at=datetime.now(timezone.utc).isoformat(),
             timeline=[
-                {"timestamp": datetime.now(timezone.utc).isoformat(), "event": "alert", "text": "Latency spike > 2500ms detected", "author": "system"}
+                {"timestamp": datetime.now(timezone.utc).isoformat(), "event": "alert", "text": f"Anomaly detected on {inc_service}: {inc_title}", "author": "system"}
             ],
             root_cause={
-                "cause": "Connection Pool Exhaustion",
-                "confidence": 0.92,
-                "explanation": "Database connection pool exhausted under concurrent load. Missing idle timeout millis & singleflight cache lock.",
+                "cause": f"Root Cause: {inc_title}",
+                "confidence": 0.94,
+                "explanation": inc_desc,
                 "evidence": [
-                    {"id": "ev-01", "source": "Log Trace", "type": "log_trace", "description": "pool.on('error') connection leak detected"}
+                    {"id": "ev-01", "source": "Log Trace", "type": "log_trace", "description": f"Error anomaly detected: {inc_title}"}
                 ],
                 "similar_incidents": []
             },
             impact={
-                "blast_radius": ["auth-service", "api-gateway"],
-                "severity": "SEV1",
+                "blast_radius": [inc_service, "api-gateway"],
+                "severity": inc_sev,
                 "estimated_users_affected": 1420,
-                "business_impact_notes": "Authentication service degraded for downstream users."
+                "business_impact_notes": f"Degradation isolated to {inc_service}."
             },
             actions=[
                 {
                     "id": f"act-{incident_id[:8]}",
                     "incident_id": incident_id,
-                    "name": "Automated Remediation Fix: Apply connection pool & singleflight JWKS fix",
+                    "name": f"Automated Remediation: {fix_info['steps'][0] if fix_info.get('steps') else inc_title}",
                     "risk_tier": "medium",
                     "status": "pending_approval"
                 }
             ],
             approvals=[],
             decision={
-                "risk_tier": "high",
-                "confidence": 0.92,
+                "risk_tier": "high" if inc_sev == "SEV1" else "medium",
+                "confidence": 0.94,
                 "requires_approval": True,
                 "recommended_action": {
                     "id": f"plan-{incident_id[:8]}",
-                    "description": "Automated Code Fix: Apply singleflight JWKS lock & connection pool tuning to auth-service",
+                    "description": f"Automated Code Fix: {fix_info['steps'][1] if len(fix_info.get('steps', [])) > 1 else inc_title}",
                     "steps": fix_info["steps"],
-                    "rollback_plan": "kubectl rollout undo deployment auth-service",
+                    "rollback_plan": f"kubectl rollout undo deployment {inc_service}",
                     "code_fix_snippet": {
-                        "file": "apps/api/src/deps/auth.py",
-                        "github_url": "https://github.com/Viresh2408/RISE/blob/main/apps/api/src/deps/auth.py#L65-L72",
-                        "lines": "L65-L72",
-                        "commit_id": "a8f3b29c",
+                        "file": fix_info["file"],
+                        "github_url": fix_info["github_url"],
+                        "lines": fix_info["lines"],
+                        "commit_id": fix_info["commit_id"],
                         "diff": fix_info["diff"]
                     }
                 }
@@ -461,7 +531,7 @@ async def get_incident(
             verification={
                 "status": "pending",
                 "checks": [
-                    {"name": "Database Connection Pool Health", "result": "pass", "value": "12/50 connections active"},
+                    {"name": f"{inc_service} Connection Health", "result": "pass", "value": "Healthy"},
                     {"name": "HTTP Endpoint Latency", "result": "pass", "value": "42ms (p99)"}
                 ]
             }
@@ -628,7 +698,7 @@ async def get_incident(
             }
         ]
 
-    # Construct Decision Data
+    # Construct Decision Data from actual recorded ActionPlan if available
     svc_label = service_name or "demo-app"
     fix_info = _generate_code_fix_snippet(incident.title, incident.description or "", svc_label)
 
@@ -640,22 +710,54 @@ async def get_incident(
     if root_cause_data and root_cause_data.get("confidence") is not None:
         decision_confidence = root_cause_data["confidence"]
 
+    recorded_plan = None
+    if action_rows and action_rows[0].action_plan:
+        recorded_plan = action_rows[0].action_plan
+
+    if recorded_plan and isinstance(recorded_plan, dict):
+        raw_steps = recorded_plan.get("action_steps") or recorded_plan.get("steps") or fix_info["steps"]
+        plan_steps = []
+        for s in raw_steps:
+            if isinstance(s, dict):
+                tool = s.get("tool", "action")
+                params = s.get("params", {})
+                plan_steps.append(f"{tool}: {params}" if params else tool)
+            else:
+                plan_steps.append(str(s))
+        if not plan_steps:
+            plan_steps = fix_info["steps"]
+
+        plan_desc = recorded_plan.get("plan_rationale") or recorded_plan.get("description") or f"Automated Code Fix & Remediate Service: {svc_label}"
+        plan_rollback = str(recorded_plan.get("rollback_plan")) if recorded_plan.get("rollback_plan") else f"kubectl rollout undo deployment {svc_label}"
+        plan_code_fix = recorded_plan.get("code_fix_snippet") or {
+            "file": fix_info["file"],
+            "github_url": fix_info["github_url"],
+            "lines": fix_info["lines"],
+            "commit_id": fix_info["commit_id"],
+            "diff": fix_info["diff"],
+        }
+    else:
+        plan_steps = fix_info["steps"]
+        plan_desc = f"Automated Code Fix: {fix_info['steps'][1] if len(fix_info.get('steps', [])) > 1 else incident.title}"
+        plan_rollback = f"kubectl rollout undo deployment {svc_label}"
+        plan_code_fix = {
+            "file": fix_info["file"],
+            "github_url": fix_info["github_url"],
+            "lines": fix_info["lines"],
+            "commit_id": fix_info["commit_id"],
+            "diff": fix_info["diff"],
+        }
+
     decision_data = {
         "risk_tier": "high" if incident.severity == "SEV1" else ("medium" if incident.severity == "SEV2" else "low"),
         "confidence": decision_confidence,
         "requires_approval": incident.status != "resolved",
         "recommended_action": {
             "id": f"plan-{str(incident.id)[:8]}",
-            "description": f"Automated Code Fix & Remediate Service: {svc_label}",
-            "steps": fix_info["steps"],
-            "rollback_plan": f"kubectl rollout undo deployment {svc_label}",
-            "code_fix_snippet": {
-                "file": fix_info["file"],
-                "github_url": fix_info["github_url"],
-                "lines": fix_info["lines"],
-                "commit_id": fix_info["commit_id"],
-                "diff": fix_info["diff"],
-            },
+            "description": plan_desc,
+            "steps": plan_steps,
+            "rollback_plan": plan_rollback,
+            "code_fix_snippet": plan_code_fix,
         },
     }
 

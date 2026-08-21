@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 from typing import Any, Dict, Optional
+import httpx
 
 from llm_gateway.gateway import LLMGateway, call_structured
 from schemas.agent_state import CheckResult, VerificationResult
@@ -123,7 +126,7 @@ def evaluate_rule_based_verification(
             recommendation="rollback",
         )
 
-    # Simple check for error rate if provided
+    # Check for error rate if provided
     error_rate = post_action_metrics.get("error_rate")
     if error_rate is not None and isinstance(error_rate, (int, float)) and error_rate > 1.0:
         return VerificationResult(
@@ -139,24 +142,151 @@ def evaluate_rule_based_verification(
             recommendation="rollback",
         )
 
+    # Check for GitHub PR verification if execution involved a GitHub code fix / PR action
+    checks = [
+        CheckResult(
+            name="health_check_endpoint",
+            result="pass",
+            value="200 OK",
+            threshold="healthy",
+        ),
+        CheckResult(
+            name="error_rate",
+            result="pass",
+            value=f"{error_rate if error_rate is not None else '0.0'}%",
+            threshold="<= 1.0%",
+        ),
+    ]
+
+    exec_result_str = execution_log.get("result", "")
+    if "Created PR:" in exec_result_str:
+        pr_link = exec_result_str.split("Created PR:")[-1].strip()
+        # Require a valid PR entity URL (/pull/\d+)
+        if "/pull/" in pr_link and "/pull/new" not in pr_link:
+            checks.append(
+                CheckResult(
+                    name="github_pr_verification",
+                    result="pass",
+                    value=pr_link[:100],
+                    threshold="valid_github_pr_present",
+                )
+            )
+        else:
+            return VerificationResult(
+                status="failed",
+                checks=[
+                    CheckResult(
+                        name="github_pr_verification",
+                        result="fail",
+                        value=f"No genuine GitHub PR created: {pr_link[:100]}",
+                        threshold="valid_github_pr_present",
+                    )
+                ],
+                recommendation="rollback",
+            )
+
     return VerificationResult(
         status="passed",
-        checks=[
-            CheckResult(
-                name="health_check_endpoint",
-                result="pass",
-                value="200 OK",
-                threshold="healthy",
-            ),
-            CheckResult(
-                name="error_rate",
-                result="pass",
-                value=f"{error_rate if error_rate is not None else '0.0'}%",
-                threshold="<= 1.0%",
-            ),
-        ],
+        checks=checks,
         recommendation="close",
     )
+
+async def verify_github_pr_live(
+    pr_identifier: Any,
+    owner: Optional[str] = None,
+    repo: Optional[str] = None,
+    token: Optional[str] = None,
+    client: Optional[httpx.AsyncClient] = None,
+) -> Dict[str, Any]:
+    """Make a live GitHub API call to independently verify that the PR genuinely exists and is open."""
+    owner = owner or os.getenv("GITHUB_OWNER", "Viresh2408")
+    repo = repo or os.getenv("GITHUB_REPO", "RISE")
+    token = token or os.getenv("GITHUB_TOKEN", "").strip()
+
+    pr_number = None
+    if isinstance(pr_identifier, int):
+        pr_number = pr_identifier
+    elif isinstance(pr_identifier, str):
+        match = re.search(r"/pull/(\d+)", pr_identifier)
+        if match:
+            pr_number = int(match.group(1))
+        elif pr_identifier.isdigit():
+            pr_number = int(pr_identifier)
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "RISE-Verification-Agent",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=10.0)
+        close_client = True
+
+    try:
+        if pr_number is not None:
+            url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                pr_state = data.get("state", "unknown")
+                is_open = pr_state == "open"
+                return {
+                    "verified": is_open,
+                    "pr_number": pr_number,
+                    "state": pr_state,
+                    "html_url": data.get("html_url", url),
+                    "title": data.get("title", ""),
+                    "reason": "PR is verified open on GitHub" if is_open else f"PR #{pr_number} is '{pr_state}' on GitHub (expected 'open')",
+                }
+            elif resp.status_code == 404:
+                return {
+                    "verified": False,
+                    "pr_number": pr_number,
+                    "state": "not_found",
+                    "reason": f"PR #{pr_number} does not exist on GitHub (HTTP 404 - deleted or invalid)",
+                }
+            else:
+                return {
+                    "verified": False,
+                    "pr_number": pr_number,
+                    "state": f"http_{resp.status_code}",
+                    "reason": f"GitHub API returned HTTP {resp.status_code} when querying PR #{pr_number}",
+                }
+        else:
+            # Fallback: check if branch ref or compare link exists
+            branch_match = re.search(r"(?:tree|new|heads|compare/main\.\.\.)/([\w\-/\.]+)", str(pr_identifier))
+            branch = branch_match.group(1) if branch_match else str(pr_identifier)
+            if branch and ("/" in branch or "fix" in branch):
+                url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+                resp = await client.get(url, headers=headers, params={"head": f"{owner}:{branch}", "state": "open"})
+                if resp.status_code == 200:
+                    prs = resp.json()
+                    if prs and len(prs) > 0:
+                        pr_data = prs[0]
+                        return {
+                            "verified": True,
+                            "pr_number": pr_data.get("number"),
+                            "state": "open",
+                            "html_url": pr_data.get("html_url"),
+                            "title": pr_data.get("title", ""),
+                            "reason": f"Open PR #{pr_data.get('number')} confirmed on GitHub for branch '{branch}'",
+                        }
+            return {
+                "verified": False,
+                "reason": f"Could not identify open PR on GitHub for '{pr_identifier}'",
+            }
+    except Exception as exc:
+        logger.warning(f"Error querying GitHub API for PR verification: {exc}")
+        return {
+            "verified": False,
+            "reason": f"GitHub API connection error: {exc}",
+        }
+    finally:
+        if close_client:
+            await client.aclose()
 
 
 async def run_verification_agent(
@@ -164,8 +294,9 @@ async def run_verification_agent(
     *,
     gateway: Optional[LLMGateway] = None,
     db: Any = None,
+    http_client: Optional[httpx.AsyncClient] = None,
 ) -> Dict[str, Any]:
-    """Execute the Verification Agent node logic."""
+    """Execute the Verification Agent node logic, including independent live GitHub API confirmation."""
     execution_log = state.get("execution_log") or {}
     post_action_metrics = state.get("post_action_metrics") or state.get("verification_metrics") or {}
     baseline_metrics = state.get("baseline_metrics") or {}
@@ -186,7 +317,7 @@ async def run_verification_agent(
 
         try:
             if gateway is not None:
-                result_obj: VerificationResult = await gateway.call_structured(
+                result_obj = await gateway.call_structured(
                     full_prompt, VerificationResult, db=db
                 )
             else:
@@ -194,6 +325,40 @@ async def run_verification_agent(
         except Exception as exc:
             logger.warning("LLM Gateway call failed in Verification Agent: %s", exc)
             result_obj = rule_result
+
+    # Independent live GitHub API confirmation if PR was created
+    pr_id = state.get("pr_number") or state.get("pr_url")
+    if not pr_id:
+        exec_res = execution_log.get("result", "")
+        if "Created PR:" in exec_res:
+            pr_id = exec_res.split("Created PR:")[-1].strip()
+
+    if pr_id:
+        github_check = await verify_github_pr_live(pr_id, client=http_client)
+        # Update or append github_pr_verification check
+        updated_checks = [c for c in result_obj.checks if c.name != "github_pr_verification"]
+        if github_check.get("verified"):
+            updated_checks.append(
+                CheckResult(
+                    name="github_pr_verification",
+                    result="pass",
+                    value=github_check.get("reason", f"PR #{github_check.get('pr_number')} verified open on GitHub"),
+                    threshold="open_pr_verified_on_github",
+                )
+            )
+            result_obj.checks = updated_checks
+        else:
+            updated_checks.append(
+                CheckResult(
+                    name="github_pr_verification",
+                    result="fail",
+                    value=github_check.get("reason", "PR is not open or not found on GitHub"),
+                    threshold="open_pr_verified_on_github",
+                )
+            )
+            result_obj.checks = updated_checks
+            result_obj.status = "failed"
+            result_obj.recommendation = "rollback"
 
     new_state = dict(state)
     new_state["verification_result"] = result_obj.model_dump()

@@ -141,6 +141,33 @@ async def run_execution_agent(
                     incident_id=incident_id,
                     db_session=db_session,
                 )
+
+                # Strict validation of response payload for GitHub / PR tools
+                if step.tool in ("create_pr", "code_fix_pr", "apply_github_patch", "git_commit"):
+                    if not isinstance(res, dict):
+                        raise ValueError(f"Tool '{step.tool}' returned invalid response type: {type(res).__name__}")
+                    if res.get("status") == "failed" or res.get("success") is False:
+                        err_msg = res.get("error") or res.get("message") or "GitHub API execution failed"
+                        raise RuntimeError(f"Tool '{step.tool}' execution failed: {err_msg}")
+                    
+                    if step.tool in ("create_pr", "code_fix_pr"):
+                        pr_num = res.get("pr_number") or res.get("number")
+                        pr_url = res.get("pr_url") or res.get("html_url")
+                        has_real_pr = (
+                            (isinstance(pr_num, int) and pr_num > 0)
+                            or (isinstance(pr_url, str) and "/pull/" in pr_url and "/pull/new" not in pr_url)
+                        )
+                        if not has_real_pr:
+                            raise RuntimeError(
+                                f"Tool '{step.tool}' response missing a genuine Pull Request entity (no valid PR number or PR URL): {res}"
+                            )
+                    else:
+                        has_commit = bool(res.get("commit_sha"))
+                        if not has_commit:
+                            raise RuntimeError(
+                                f"Tool '{step.tool}' response missing valid commit SHA: {res}"
+                            )
+
                 steps_completed += 1
                 step_results.append(res)
             except Exception as step_exc:

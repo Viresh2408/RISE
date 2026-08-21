@@ -185,14 +185,21 @@ async def approve_action(
             target_file=target_file,
         )
 
+        if not github_result.get("success"):
+            err_msg = github_result.get("error", "GitHub automated PR creation failed")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=err_msg,
+            )
+
         # 3. Backend-driven execution triggered automatically
         try:
             import threading, asyncio
             action_plan = {
                 "action_type": "apply_github_patch",
-                "action_steps": [{"tool": "git_commit", "params": {"file": target_file, "commit": github_result.get("commit_sha")}}],
+                "action_steps": [{"tool": "create_pr", "params": {"file": target_file, "commit": github_result.get("commit_sha"), "pr_number": github_result.get("pr_number"), "pr_url": github_result.get("pr_url")}}],
                 "rollback_plan": [{"tool": "git_revert", "params": {"commit": github_result.get("commit_sha")}}],
-                "plan_rationale": f"Apply remediation commit {github_result.get('commit_sha')}",
+                "plan_rationale": f"Apply remediation PR #{github_result.get('pr_number')} commit {github_result.get('commit_sha')}",
             }
             approved_hash = compute_action_plan_hash(action_plan)
             state = {
@@ -202,10 +209,12 @@ async def approve_action(
                 "approved_plan_hash": approved_hash,
                 "environment": "staging",
                 "human_approval": "approved",
+                "pr_url": github_result.get("pr_url"),
+                "pr_number": github_result.get("pr_number"),
             }
             threading.Thread(target=lambda: asyncio.run(run_execution_agent(state)), daemon=True).start()
-        except Exception:
-            pass
+        except Exception as bg_err:
+            logger.warning(f"Background execution agent start error: {bg_err}")
 
         res = {
             "status": "approved",
@@ -214,9 +223,10 @@ async def approve_action(
             "commit_url": github_result.get("commit_url"),
             "commit_message": github_result.get("commit_message"),
             "commit_timestamp": github_result.get("commit_timestamp"),
-            "file_modified": github_result.get("file"),
+            "file_modified": github_result.get("file_modified") or github_result.get("file"),
             "branch": github_result.get("branch", "main"),
-            "pr_url": github_result.get("html_url"),
+            "pr_url": github_result.get("pr_url"),
+            "pr_number": github_result.get("pr_number"),
         }
         return build_response(data=res)
     finally:

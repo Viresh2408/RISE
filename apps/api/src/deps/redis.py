@@ -1,3 +1,4 @@
+# [RISE Autonomous Patch - 2026-08-21 01:25:30Z] Remediation for: Redis Connection Churn & Missing ConnectionPool in api-gateway
 """Redis client dependency for FastAPI.
 
 Provides a ``get_redis_client()`` dependency that can be overridden in tests

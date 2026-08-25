@@ -24,6 +24,7 @@ import httpx
 from llm_gateway.exceptions import AllProvidersFailedError, StructuredOutputError
 from llm_gateway.gateway import LLMGateway, call_structured
 from schemas.agent_state import IncidentContext
+from apps.agents.src.nodes.slack_history_fetcher import search_slack_history, SlackThread
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ READ_ONLY_TOOLS: list[str] = [
     "query_prometheus_metrics",
     "query_github_deploys",
     "search_similar_incidents",
+    "search_slack_history",
 ]
 
 # ---------------------------------------------------------------------------
@@ -87,6 +89,10 @@ Incident Event:
 
 <untrusted_data source="github">
 {retrieved_deploy_history}
+</untrusted_data>
+
+<untrusted_data source="slack_history">
+{retrieved_slack_threads}
 </untrusted_data>
 
 Similar past incidents (from vector search):
@@ -286,6 +292,7 @@ def build_user_prompt(
     retrieved_metrics: str,
     retrieved_deploy_history: str,
     similar_incidents: List[Dict[str, Any]],
+    slack_threads_text: str = "",
 ) -> str:
     """Build the user prompt with untrusted data tags."""
     return _USER_PROMPT_TEMPLATE.format(
@@ -293,6 +300,7 @@ def build_user_prompt(
         retrieved_logs=retrieved_logs,
         retrieved_metrics=retrieved_metrics,
         retrieved_deploy_history=retrieved_deploy_history,
+        retrieved_slack_threads=slack_threads_text or "(no Slack history available)",
         similar_incidents_json=json.dumps(similar_incidents, indent=2),
     )
 
@@ -306,18 +314,23 @@ async def run_context_builder_agent(
     prometheus_fetcher: Optional[Any] = None,
     github_fetcher: Optional[Any] = None,
     qdrant_fetcher: Optional[Any] = None,
+    slack_fetcher: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Execute the Context Builder Agent node logic.
 
-    Pulls logs, metrics, deploys, and vector search results, builds the prompt,
-    invokes LLM gateway, and ensures context_completeness_pct and missing_sources are accurate.
+    Pulls logs, metrics, deploys, vector search results, and Slack history,
+    builds the prompt, invokes LLM gateway, and stores a raw_evidence_record
+    containing the exact fetched bytes (not a summary) for downstream grounding.
     """
+    import datetime as _dt
+
     event = state.get("event_payload") or state.get("incident_event") or {}
     resource_id = event.get("resource_id") or "unknown_resource"
     tenant_id = state.get("tenant_id") or "default_tenant"
     summary = event.get("summary") or event.get("event_type") or "incident"
 
     missing_sources: list[str] = []
+    fetched_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
     # 1. Fetch Loki logs
     _loki_fn = loki_fetcher or fetch_loki_logs
@@ -343,9 +356,31 @@ async def run_context_builder_agent(
     if qdrant_missing:
         missing_sources.append("qdrant")
 
-    # Calculate completeness % (4 sources total)
+    # 5. Fetch Slack history (optional enrichment — missing token is not a missing source)
+    _slack_fn = slack_fetcher or search_slack_history
+    slack_threads: List[SlackThread] = []
+    try:
+        slack_threads, slack_missing = _slack_fn(
+            service=resource_id,
+            error_pattern=summary,
+        )
+        if slack_missing:
+            missing_sources.append("slack")
+    except Exception as exc:
+        logger.warning("Slack history fetch failed unexpectedly: %s", exc)
+
+    # Build Slack text for prompt
+    slack_threads_text = ""
+    if slack_threads:
+        slack_threads_text = json.dumps(
+            [{"channel": t.channel, "snippet": t.snippet, "permalink": t.permalink} for t in slack_threads],
+            indent=2,
+        )
+
+    # Calculate completeness % based on non-optional sources (4 core sources)
+    core_missing = [s for s in missing_sources if s != "slack"]
     total_sources = 4
-    expected_completeness = int(round((total_sources - len(missing_sources)) / float(total_sources) * 100))
+    expected_completeness = int(round((total_sources - len(core_missing)) / float(total_sources) * 100))
 
     user_prompt = build_user_prompt(
         incident_event=event,
@@ -353,6 +388,7 @@ async def run_context_builder_agent(
         retrieved_metrics=retrieved_metrics,
         retrieved_deploy_history=retrieved_deploys,
         similar_incidents=similar_incidents,
+        slack_threads_text=slack_threads_text,
     )
 
     full_prompt = CONTEXT_BUILDER_SYSTEM_PROMPT + "\n\n" + user_prompt
@@ -385,10 +421,40 @@ async def run_context_builder_agent(
     combined_missing = sorted(list(set(result_dict.get("missing_sources", []) + missing_sources)))
     result_dict["missing_sources"] = combined_missing
 
-    # Override/recalculate completeness % if sources were missing
-    if missing_sources:
+    # Override/recalculate completeness % if core sources were missing
+    if core_missing:
         result_dict["context_completeness_pct"] = expected_completeness
+
+    # Attach fetched Slack threads to the context object
+    result_dict["slack_threads"] = [
+        {"thread_ts": t.thread_ts, "channel": t.channel, "permalink": t.permalink,
+         "snippet": t.snippet, "matched_pattern": t.matched_pattern}
+        for t in slack_threads
+    ]
+
+    # ── raw_evidence_record: exact fetched bytes stored for grounding audit ──
+    # This record is NOT an LLM summary. It contains the actual strings returned
+    # by each fetcher function, stored verbatim so downstream agents and the
+    # evidence chain endpoint can reference them without re-derivation.
+    raw_evidence_record: Dict[str, Any] = {
+        "fetched_at": fetched_at,
+        "sources": {
+            "loki": {"content": retrieved_logs, "is_missing": loki_missing},
+            "prometheus": {"content": retrieved_metrics, "is_missing": prom_missing},
+            "github": {
+                "content": retrieved_deploys,
+                "is_missing": gh_missing,
+                "file_contents": {},   # populated by github_file_fetcher in decision_plan node
+            },
+            "slack": {
+                "threads": result_dict["slack_threads"],
+                "is_missing": "slack" in missing_sources,
+            },
+            "qdrant": {"incidents": similar_incidents, "is_missing": qdrant_missing},
+        },
+    }
 
     new_state = dict(state)
     new_state["context"] = result_dict
+    new_state["raw_evidence_record"] = raw_evidence_record
     return new_state

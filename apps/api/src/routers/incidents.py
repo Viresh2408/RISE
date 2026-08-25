@@ -44,6 +44,8 @@ from db.models import (
 from schemas import (
     CommentCreateRequest,
     CommentDTO,
+    EvidenceChainDTO,
+    EvidenceDTO,
     IncidentCreateRequest,
     IncidentDetailDTO,
     IncidentDTO,
@@ -209,109 +211,6 @@ def _parse_uuid(id_str: str) -> uuid.UUID:
         return uuid.uuid5(uuid.NAMESPACE_DNS, id_str)
 
 
-def _generate_code_fix_snippet(incident_title: str, incident_desc: str, service_name: str) -> dict:
-    title_lower = (incident_title + " " + incident_desc).lower()
-
-    if "redis" in title_lower or "memory" in title_lower or "churn" in title_lower:
-        file_path = "apps/api/src/deps/redis.py"
-        lines = "L20-L33"
-        github_url = f"https://github.com/Viresh2408/RISE/blob/main/{file_path}#{lines}"
-        diff = (
-            f"// Repository: RISE/{file_path} ({lines})\n"
-            "@@ -20,13 +20,16 @@\n"
-            ' _REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")\n'
-            '+_REDIS_POOL = None if redis is None else redis.ConnectionPool.from_url(_REDIS_URL, max_connections=50)\n'
-            "\n"
-            " def get_redis_client() -> Generator[Any, None, None]:\n"
-            "     if redis is None:\n"
-            "         yield None\n"
-            "         return\n"
-            "-    client = redis.from_url(_REDIS_URL, decode_responses=False)\n"
-            "+    client = redis.Redis(connection_pool=_REDIS_POOL, decode_responses=False)\n"
-            "     try:\n"
-            "         yield client"
-        )
-        steps = [
-            f"Identify unpooled Redis client instantiation in repository: RISE/{file_path} ({lines})",
-            "Initialize shared global ConnectionPool (max 50) and reuse active socket connections",
-            "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
-        ]
-    elif "webhook" in title_lower or "replay" in title_lower or "stripe" in title_lower:
-        file_path = "apps/api/src/routers/webhooks.py"
-        lines = "L93-L103"
-        github_url = f"https://github.com/Viresh2408/RISE/blob/main/{file_path}#{lines}"
-        diff = (
-            f"// Repository: RISE/{file_path} ({lines})\n"
-            "@@ -93,10 +93,13 @@ async def _ingest(\n"
-            "     raw_body: bytes = await request.body()\n"
-            "\n"
-            "     # ── 2. Signature verification ──────────────────────────────────────────\n"
-            "+    # Constant-time HMAC replay window filter with atomic nonce acquisition\n"
-            "     await verifier.verify(request, raw_body)\n"
-            "\n"
-            "     # ── 3. Parse JSON body ─────────────────────────────────────────────────\n"
-            "     try:\n"
-            "         payload: Dict[str, Any] = json.loads(raw_body)\n"
-            "+        if redis_client: await register_dedup(redis_client, source=source, raw_body=raw_body)"
-        )
-        steps = [
-            f"Trace webhook ingestion flow in repository: RISE/{file_path} ({lines})",
-            "Enforce distributed nonce deduplication before routing to Ingestion Agent",
-            "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
-        ]
-    elif "auth" in title_lower or "latency" in title_lower or "jwk" in title_lower:
-        file_path = "apps/api/src/deps/auth.py"
-        lines = "L65-L72"
-        github_url = f"https://github.com/Viresh2408/RISE/blob/main/{file_path}#{lines}"
-        diff = (
-            f"// Repository: RISE/{file_path} ({lines})\n"
-            "@@ -65,6 +65,8 @@\n"
-            ' SUPABASE_JWT_SECRET: Optional[str] = os.getenv("SUPABASE_JWT_SECRET")\n'
-            '-SUPABASE_JWKS_URL: Optional[str] = os.getenv("SUPABASE_JWKS_URL")\n'
-            '+SUPABASE_JWKS_URL: Optional[str] = os.getenv("SUPABASE_JWKS_URL", "http://localhost:8000/.well-known/jwks.json")\n'
-            "+# Singleflight JWKS cache lock to prevent latency spikes under load"
-        )
-        steps = [
-            f"Fix authentication latency spike in repository: RISE/{file_path} ({lines})",
-            "Add cached singleflight token validation guard to eliminate thundering herd latency spikes",
-            "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
-        ]
-    else:
-        file_path = "packages/rise-core/db/session.py"
-        lines = "L15-L26"
-        github_url = f"https://github.com/Viresh2408/RISE/blob/main/{file_path}#{lines}"
-        diff = (
-            f"// Repository: RISE/{file_path} ({lines})\n"
-            "@@ -15,10 +15,12 @@ def _init_engine():\n"
-            '     if "postgresql" in DATABASE_URL:\n'
-            "         try:\n"
-            "+            # Scaled connection pool with auto-reconnect pre-ping & leak listener cleanup\n"
-            "             test_engine = create_engine(\n"
-            "                 DATABASE_URL,\n"
-            "-                pool_size=5,\n"
-            "-                max_overflow=5,\n"
-            "+                pool_size=25,\n"
-            "+                max_overflow=25,\n"
-            "                 pool_pre_ping=True,\n"
-            "                 pool_recycle=1800,\n"
-            "                 connect_args={\"connect_timeout\": 5},"
-        )
-        steps = [
-            f"Identify connection pool bottleneck in repository: RISE/{file_path} ({lines})",
-            "Expand SQLAlchemy connection pool size to 25 with pre-ping validation and pool recycling",
-            "Execute rolling deploy restart: uvicorn apps.api.src.main:app --reload",
-        ]
-
-    return {
-        "file": file_path,
-        "github_url": github_url,
-        "lines": lines,
-        "commit_id": "a8f3b29c",
-        "diff": diff,
-        "steps": steps,
-    }
-
-
 def _compute_confidence(incident_title: str, incident_desc: str, severity: str) -> float:
     """
     Derive a realistic confidence score by analysing the actual error signals
@@ -383,63 +282,6 @@ def _compute_confidence(incident_title: str, incident_desc: str, severity: str) 
     return round(min(0.97, max(0.20, score)), 2)
 
 
-KNOWN_INCIDENTS_CATALOG: Dict[str, Dict[str, str]] = {
-    "inc-redis-pool-09": {
-        "title": "Redis Client Connection Storm & TCP Socket Churn in api-gateway",
-        "description": "Unpooled redis.from_url() instantiated a new TCP handshake on every incoming API request. Under 2,500 req/s load, Redis client connection churn exhausted local ephemeral TCP ports, triggering 500 internal server errors.",
-        "affected_service": "api-gateway",
-        "severity": "SEV1",
-    },
-    "inc-auth-pool-01": {
-        "title": "PostgreSQL Connection Pool Saturation in auth-service",
-        "description": "Surge in OAuth token requests saturated database connection pool (10/10 active connections). Connection leak in catch handler causing cascading 503 errors.",
-        "affected_service": "auth-service",
-        "severity": "SEV1",
-    },
-    "inc-pay-replay-02": {
-        "title": "Payment Webhook Duplicate Replay Attack & Rate Limit Trigger",
-        "description": "Stripe webhook receiver detected 450 duplicate payloads/sec with identical event IDs. Rate-limiter triggered 429s and double-charging ledger race condition prevented.",
-        "affected_service": "payment-service",
-        "severity": "SEV1",
-    },
-    "inc-k8s-ingress-03": {
-        "title": "Kubernetes Ingress 504 Gateway Timeout Cascade",
-        "description": "NGINX Ingress proxy_read_timeout (15s) mismatch with backend async uvicorn pool under sustained 12,000 req/min traffic surge.",
-        "affected_service": "api-gateway",
-        "severity": "SEV2",
-    },
-    "inc-report-oom-04": {
-        "title": "OOMKilled CrashLoopBackOff in PDF Analytics Worker",
-        "description": "Unclosed io.BytesIO canvas stream during weekly PDF generation caused container RSS memory to breach 512MB limit.",
-        "affected_service": "analytics-worker",
-        "severity": "SEV2",
-    },
-    "inc-redis-stampede-05": {
-        "title": "Redis Session Cache Stampede on Token Refresh",
-        "description": "Synchronized 3600s TTL expiration across 20,000 active sessions generated simultaneous cache miss wave against primary database.",
-        "affected_service": "auth-service",
-        "severity": "SEV2",
-    },
-    "inc-kafka-rebalance-06": {
-        "title": "Kafka Consumer Group Rebalance Storm in ingestion-worker",
-        "description": "Batch event processing time exceeded max.poll.interval.ms threshold, triggering endless partition rebalances and lag accumulation.",
-        "affected_service": "ingestion-worker",
-        "severity": "SEV3",
-    },
-    "inc-checkout-redis-07": {
-        "title": "Redis Cluster Cross-Slot Pipeline Storm & Key Eviction Surge in checkout-gateway",
-        "description": "Un-hashed multi-key MGET pipeline across Redis cluster shards triggered CROSSSLOT Keys in request do not hash to the same slot exceptions. Cart checkout failure rate rose to 24.8%.",
-        "affected_service": "checkout-gateway",
-        "severity": "SEV1",
-    },
-    "inc-sse-zombie-08": {
-        "title": "SSE Heartbeat Socket Desync & File Descriptor Exhaustion in notification-hub",
-        "description": "Server-Sent Events streaming handler omitted client half-close cleanup during mobile network flapping. 45,000 dangling socket descriptors saturated ulimit, causing 100% gateway connection rejection on real-time alerts.",
-        "affected_service": "notification-hub",
-        "severity": "SEV1",
-    },
-}
-
 
 @router.get("/{incident_id}")
 async def get_incident(
@@ -461,82 +303,10 @@ async def get_incident(
         logger.warning("Failed querying incident %s: %s", incident_id, exc)
 
     if incident is None:
-        cat_info = KNOWN_INCIDENTS_CATALOG.get(incident_id)
-        if cat_info:
-            inc_title = cat_info["title"]
-            inc_desc = cat_info["description"]
-            inc_service = cat_info["affected_service"]
-            inc_sev = cat_info["severity"]
-        else:
-            inc_title = f"Autonomous Incident Investigation #{incident_id}"
-            inc_desc = f"Service degradation and anomaly investigation workflow for incident {incident_id}."
-            inc_service = "api-service"
-            inc_sev = "SEV2"
-
-        fix_info = _generate_code_fix_snippet(inc_title, inc_desc, inc_service)
-        demo_inc = IncidentDetailDTO(
-            id=incident_id,
-            title=inc_title,
-            description=inc_desc,
-            severity=inc_sev,
-            status="awaiting_approval",
-            affected_service=inc_service,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            timeline=[
-                {"timestamp": datetime.now(timezone.utc).isoformat(), "event": "alert", "text": f"Anomaly detected on {inc_service}: {inc_title}", "author": "system"}
-            ],
-            root_cause={
-                "cause": f"Root Cause: {inc_title}",
-                "confidence": 0.94,
-                "explanation": inc_desc,
-                "evidence": [
-                    {"id": "ev-01", "source": "Log Trace", "type": "log_trace", "description": f"Error anomaly detected: {inc_title}"}
-                ],
-                "similar_incidents": []
-            },
-            impact={
-                "blast_radius": [inc_service, "api-gateway"],
-                "severity": inc_sev,
-                "estimated_users_affected": 1420,
-                "business_impact_notes": f"Degradation isolated to {inc_service}."
-            },
-            actions=[
-                {
-                    "id": f"act-{incident_id[:8]}",
-                    "incident_id": incident_id,
-                    "name": f"Automated Remediation: {fix_info['steps'][0] if fix_info.get('steps') else inc_title}",
-                    "risk_tier": "medium",
-                    "status": "pending_approval"
-                }
-            ],
-            approvals=[],
-            decision={
-                "risk_tier": "high" if inc_sev == "SEV1" else "medium",
-                "confidence": 0.94,
-                "requires_approval": True,
-                "recommended_action": {
-                    "id": f"plan-{incident_id[:8]}",
-                    "description": f"Automated Code Fix: {fix_info['steps'][1] if len(fix_info.get('steps', [])) > 1 else inc_title}",
-                    "steps": fix_info["steps"],
-                    "rollback_plan": f"kubectl rollout undo deployment {inc_service}",
-                    "code_fix_snippet": {
-                        "file": fix_info["file"],
-                        "github_url": fix_info["github_url"],
-                        "lines": fix_info["lines"],
-                        "commit_id": fix_info["commit_id"],
-                        "diff": fix_info["diff"]
-                    }
-                }
-            },
-            verification={
-                "status": "pending",
-                "checks": [
-                    {"name": f"{inc_service} Connection Health", "result": "pass", "value": "Healthy"},
-                    {"name": "HTTP Endpoint Latency", "result": "pass", "value": "42ms (p99)"}
-                ]
-            }
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": f"Incident {incident_id} not found", "details": {}},
         )
-        return build_response(data=demo_inc.model_dump())
 
     # Resolve service name
     service_name = ""
@@ -589,6 +359,11 @@ async def get_incident(
                     "source": ev.type,
                     "type": ev.type,
                     "description": ev.excerpt or ev.reference,
+                    "commit_sha": ev.commit_sha,
+                    "file_path": ev.file_path,
+                    "line_start": ev.line_start,
+                    "line_end": ev.line_end,
+                    "fetched_at": ev.fetched_at.isoformat() if ev.fetched_at else None,
                 }
                 for ev in evidence_rows
             ],
@@ -700,7 +475,6 @@ async def get_incident(
 
     # Construct Decision Data from actual recorded ActionPlan if available
     svc_label = service_name or "demo-app"
-    fix_info = _generate_code_fix_snippet(incident.title, incident.description or "", svc_label)
 
     # Compute confidence from real incident error signals
     decision_confidence = _compute_confidence(
@@ -715,7 +489,7 @@ async def get_incident(
         recorded_plan = action_rows[0].action_plan
 
     if recorded_plan and isinstance(recorded_plan, dict):
-        raw_steps = recorded_plan.get("action_steps") or recorded_plan.get("steps") or fix_info["steps"]
+        raw_steps = recorded_plan.get("action_steps") or recorded_plan.get("steps") or []
         plan_steps = []
         for s in raw_steps:
             if isinstance(s, dict):
@@ -724,41 +498,45 @@ async def get_incident(
                 plan_steps.append(f"{tool}: {params}" if params else tool)
             else:
                 plan_steps.append(str(s))
-        if not plan_steps:
-            plan_steps = fix_info["steps"]
 
-        plan_desc = recorded_plan.get("plan_rationale") or recorded_plan.get("description") or f"Automated Code Fix & Remediate Service: {svc_label}"
-        plan_rollback = str(recorded_plan.get("rollback_plan")) if recorded_plan.get("rollback_plan") else f"kubectl rollout undo deployment {svc_label}"
-        plan_code_fix = recorded_plan.get("code_fix_snippet") or {
-            "file": fix_info["file"],
-            "github_url": fix_info["github_url"],
-            "lines": fix_info["lines"],
-            "commit_id": fix_info["commit_id"],
-            "diff": fix_info["diff"],
-        }
+        plan_desc = recorded_plan.get("plan_rationale") or recorded_plan.get("description") or f"Automated Remediation: {svc_label}"
+        plan_rollback = str(recorded_plan.get("rollback_plan")) if recorded_plan.get("rollback_plan") else None
+
+        # code_fix_snippet is only present when it was generated from REAL file content
+        # (grounded via github_file_fetcher). Never synthesised from incident text.
+        plan_code_fix = recorded_plan.get("code_fix_snippet") or None
+
+        # If the plan was escalated (requires_manual_plan=True) include the reason
+        plan_fix_unavailable = recorded_plan.get("fix_unavailable_reason") or (
+            recorded_plan.get("plan_rationale") if recorded_plan.get("requires_manual_plan") else None
+        )
     else:
-        plan_steps = fix_info["steps"]
-        plan_desc = f"Automated Code Fix: {fix_info['steps'][1] if len(fix_info.get('steps', [])) > 1 else incident.title}"
-        plan_rollback = f"kubectl rollout undo deployment {svc_label}"
-        plan_code_fix = {
-            "file": fix_info["file"],
-            "github_url": fix_info["github_url"],
-            "lines": fix_info["lines"],
-            "commit_id": fix_info["commit_id"],
-            "diff": fix_info["diff"],
-        }
+        plan_steps = [f"Investigate and remediate {svc_label} — no automated plan available"]
+        plan_desc = f"No verified automated plan available for {svc_label}. Human investigation required."
+        plan_rollback = None
+        plan_code_fix = None
+        plan_fix_unavailable = (
+            "No automated action plan has been generated by the agent pipeline for this incident. "
+            "Manual investigation required."
+        )
+
+    recommended_action_payload: Dict[str, Any] = {
+        "id": f"plan-{str(incident.id)[:8]}",
+        "description": plan_desc,
+        "steps": plan_steps,
+    }
+    if plan_rollback:
+        recommended_action_payload["rollback_plan"] = plan_rollback
+    if plan_code_fix:
+        recommended_action_payload["code_fix_snippet"] = plan_code_fix
+    if plan_fix_unavailable:
+        recommended_action_payload["fix_unavailable_reason"] = plan_fix_unavailable
 
     decision_data = {
         "risk_tier": "high" if incident.severity == "SEV1" else ("medium" if incident.severity == "SEV2" else "low"),
         "confidence": decision_confidence,
         "requires_approval": incident.status != "resolved",
-        "recommended_action": {
-            "id": f"plan-{str(incident.id)[:8]}",
-            "description": plan_desc,
-            "steps": plan_steps,
-            "rollback_plan": plan_rollback,
-            "code_fix_snippet": plan_code_fix,
-        },
+        "recommended_action": recommended_action_payload,
     }
 
     detail = IncidentDetailDTO(
@@ -1015,3 +793,125 @@ async def delete_incident(
     db.commit()
 
     return build_response(data={"deleted": True, "incident_id": incident_id})
+
+
+@router.get("/{incident_id}/evidence-chain")
+async def get_evidence_chain(
+    incident_id: str,
+    user: UserContext = Depends(require_role("viewer")),
+    db: Session = Depends(get_db),
+):
+    """Retrieve full, queryable evidence chain for an incident action plan.
+
+    Gives frontend and auditing callers full provenance for:
+      - Line-level file references with commit SHAs and fetch timestamps
+      - Context Builder raw evidence record
+      - Fix verification state (verified vs unavailable with reason)
+    """
+    tenant_id = _parse_uuid(user.tenant_id)
+    inc_uuid = _parse_uuid(incident_id)
+
+    incident = db.execute(
+        select(Incident).where(
+            Incident.tenant_id == tenant_id,
+            Incident.id == inc_uuid,
+        )
+    ).scalar_one_or_none()
+
+    if incident is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": f"Incident {incident_id} not found", "details": {}},
+        )
+
+    # 1. Fetch Root Cause & Evidence
+    rc_row = db.execute(
+        select(RootCause).where(
+            RootCause.tenant_id == tenant_id,
+            RootCause.incident_id == incident.id,
+        ).order_by(RootCause.created_at.desc())
+    ).scalars().first()
+
+    evidence_items = []
+    if rc_row:
+        ev_rows = db.execute(
+            select(Evidence).where(
+                Evidence.tenant_id == tenant_id,
+                Evidence.root_cause_id == rc_row.id,
+            )
+        ).scalars().all()
+        for ev in ev_rows:
+            evidence_items.append(
+                EvidenceDTO(
+                    id=str(ev.id),
+                    type=ev.type,
+                    description=ev.excerpt or ev.reference,
+                    source=ev.type,
+                    commit_sha=ev.commit_sha,
+                    file_path=ev.file_path,
+                    line_start=ev.line_start,
+                    line_end=ev.line_end,
+                    fetched_at=ev.fetched_at.isoformat() if ev.fetched_at else None,
+                )
+            )
+
+    # 2. Fetch Context Builder Step & Raw Evidence Record
+    context_step = db.execute(
+        select(AgentStepResult).where(
+            AgentStepResult.tenant_id == tenant_id,
+            AgentStepResult.agent_name.in_(["context_builder", "node_context_builder"]),
+        ).order_by(AgentStepResult.created_at.desc())
+    ).scalars().first()
+
+    raw_evidence_summary = None
+    files_fetched = []
+    slack_threads = []
+
+    if context_step:
+        if context_step.raw_evidence_record:
+            raw_evidence_summary = context_step.raw_evidence_record
+            sources = context_step.raw_evidence_record.get("sources", {})
+            slack_info = sources.get("slack", {})
+            slack_threads = slack_info.get("threads", [])
+            gh_info = sources.get("github", {})
+            file_contents = gh_info.get("file_contents", {})
+            for p, fc in file_contents.items():
+                if fc:
+                    files_fetched.append({
+                        "path": p,
+                        "commit_sha": fc.get("commit_sha"),
+                        "line_count": fc.get("line_count"),
+                    })
+
+    # 3. Check Remediation Actions for fix verification
+    action_row = db.execute(
+        select(RemediationAction).where(
+            RemediationAction.tenant_id == tenant_id,
+            RemediationAction.incident_id == incident.id,
+        ).order_by(RemediationAction.created_at.desc())
+    ).scalars().first()
+
+    fix_verified = False
+    fix_unavailable_reason = None
+    if action_row and action_row.action_plan:
+        plan = action_row.action_plan
+        if plan.get("code_fix_snippet") and not plan.get("requires_manual_plan"):
+            fix_verified = True
+        else:
+            fix_unavailable_reason = plan.get("fix_unavailable_reason") or plan.get("plan_rationale")
+    else:
+        fix_unavailable_reason = "No automated action plan generated for this incident."
+
+    chain = EvidenceChainDTO(
+        incident_id=incident_id,
+        root_cause_summary=rc_row.cause_summary if rc_row else None,
+        confidence=rc_row.confidence if rc_row else None,
+        evidence_items=evidence_items,
+        raw_evidence_summary=raw_evidence_summary,
+        files_fetched=files_fetched,
+        slack_threads=slack_threads,
+        fix_verified=fix_verified,
+        fix_unavailable_reason=fix_unavailable_reason,
+    )
+    return build_response(data=chain.model_dump())
+

@@ -53,6 +53,9 @@ class DecisionEngine:
         opa_client: Optional[httpx.AsyncClient] = None,
         db: Any = None,
         use_local_risk_fallback: bool = False,
+        # Grounding parameters threaded from decision_plan node
+        file_contents: Optional[Dict[str, Any]] = None,
+        required_files: Optional[List[str]] = None,
     ) -> Decision:
         """Execute full decision pipeline across all sub-engines."""
         root_cause = state.get("root_cause") or {}
@@ -80,6 +83,8 @@ class DecisionEngine:
                     similar_resolutions=similar_resolutions,
                     gateway=gateway,
                     db=db,
+                    file_contents=file_contents,
+                    required_files=required_files,
                 )
         else:
             action_plan = await self.action_planner.generate_plan(
@@ -88,6 +93,8 @@ class DecisionEngine:
                 similar_resolutions=similar_resolutions,
                 gateway=gateway,
                 db=db,
+                file_contents=file_contents,
+                required_files=required_files,
             )
 
         # Extract parameters for Risk and Confidence evaluation

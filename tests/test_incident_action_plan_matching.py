@@ -91,22 +91,11 @@ def client() -> Generator[TestClient, None, None]:
         yield c
 
 
-def test_inc_redis_pool_09_catalog_plan_matching(client: TestClient):
-    """Confirm inc-redis-pool-09 returns Redis ConnectionPool action plan, not JWKS/auth."""
+def test_unseeded_incident_returns_404_no_fabricated_fallback(client: TestClient):
+    """Confirm unknown/unseeded incidents return 404 rather than fabricated demo catalog plans."""
     headers = {"Authorization": f"Bearer {_make_jwt('viewer')}"}
     resp = client.get("/api/v1/incidents/inc-redis-pool-09", headers=headers)
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-
-    assert data["id"] == "inc-redis-pool-09"
-    assert "Redis" in data["title"]
-    assert data["affected_service"] == "api-gateway"
-
-    rec_action = data["decision"]["recommended_action"]
-    assert "Redis" in rec_action["description"] or "ConnectionPool" in rec_action["description"]
-    assert any("redis.py" in step for step in rec_action["steps"])
-    assert rec_action["code_fix_snippet"]["file"] == "apps/api/src/deps/redis.py"
-    assert "ConnectionPool" in rec_action["code_fix_snippet"]["diff"]
+    assert resp.status_code == 404
 
 
 def test_db_recorded_action_plan_rendered_in_incident_detail(client: TestClient):

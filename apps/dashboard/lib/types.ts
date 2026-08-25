@@ -65,6 +65,9 @@ export interface ActionPlanDTO {
   steps: string[];
   rollback_plan?: string | null;
   code_fix_snippet?: CodeFixSnippetDTO | null;
+  // Present when the agent was unable to generate a verified fix.
+  // Displayed in the UI instead of a diff viewer.
+  fix_unavailable_reason?: string | null;
 }
 
 export interface RootCauseDTO {

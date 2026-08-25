@@ -391,3 +391,68 @@ async def test_run_decision_plan_agent_node_entrypoint():
     assert updated_state["requires_approval"] is False
     assert updated_state["risk_tier"] == "low"
     assert updated_state["action_plan"]["action_type"] == "restart_pod"
+
+
+@pytest.mark.anyio
+async def test_action_planner_pre_llm_gate_blocks_when_file_missing():
+    """Test: When required file fetch returns None, pre-LLM gate blocks LLM call.
+
+    Returns requires_manual_plan=True immediately.
+    """
+    planner = ActionPlanner()
+    mock_gateway = mock.AsyncMock()
+
+    plan = await planner.generate_plan(
+        root_cause={"cause_summary": "Bug in redis.py"},
+        impact_assessment={"blast_radius_services": ["api-service"], "severity": "SEV2"},
+        gateway=mock_gateway,
+        required_files=["apps/api/src/deps/redis.py"],
+        file_contents={"apps/api/src/deps/redis.py": None},
+    )
+
+    # LLM must NOT have been called
+    mock_gateway.call_structured.assert_not_called()
+    assert plan.requires_manual_plan is True
+    assert plan.action_type == "escalate_to_human"
+    assert "real file content unavailable" in plan.plan_rationale
+
+
+@pytest.mark.anyio
+async def test_action_planner_includes_real_file_content_when_present():
+    """Test: When file content is present, prompt contains <real_file_content> block."""
+    from apps.agents.src.nodes.github_file_fetcher import GitHubFileContent
+
+    planner = ActionPlanner()
+    mock_gateway = mock.AsyncMock()
+    mock_gateway.call_structured.return_value = ActionPlan(
+        action_type="code_fix_pr",
+        action_steps=[ActionStep(tool="code_fix_pr", params={"file": "apps/api/src/deps/redis.py"})],
+        rollback_plan=[ActionStep(tool="rollback_deployment", params={"service": "api"})],
+        plan_rationale="Applied grounded patch",
+        requires_manual_plan=False,
+    )
+
+    fc = GitHubFileContent(
+        path="apps/api/src/deps/redis.py",
+        content="line1\nline2\n",
+        sha="sha1",
+        commit_sha="csha1",
+        line_count=2,
+        ref="main",
+        repo="Viresh2408/RISE",
+    )
+
+    plan = await planner.generate_plan(
+        root_cause={"cause_summary": "Bug in redis.py"},
+        impact_assessment={"blast_radius_services": ["api-service"], "severity": "SEV2"},
+        gateway=mock_gateway,
+        required_files=["apps/api/src/deps/redis.py"],
+        file_contents={"apps/api/src/deps/redis.py": fc},
+    )
+
+    mock_gateway.call_structured.assert_called_once()
+    called_prompt = mock_gateway.call_structured.call_args[0][0]
+    assert '<real_file_content path="apps/api/src/deps/redis.py"' in called_prompt
+    assert "line1\nline2" in called_prompt
+    assert plan.requires_manual_plan is False
+

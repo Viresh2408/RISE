@@ -52,6 +52,11 @@ class EvidenceDTO(BaseModel):
     type: str
     description: str
     source: str
+    commit_sha: Optional[str] = None
+    file_path: Optional[str] = None
+    line_start: Optional[int] = None
+    line_end: Optional[int] = None
+    fetched_at: Optional[str] = None
 
 
 class IncidentRefDTO(BaseModel):
@@ -64,6 +69,21 @@ class ActionPlanDTO(BaseModel):
     id: str
     description: str
     steps: list[str]
+    rollback_plan: Optional[str] = None
+    code_fix_snippet: Optional[dict[str, Any]] = None
+    fix_unavailable_reason: Optional[str] = None
+
+
+class EvidenceChainDTO(BaseModel):
+    incident_id: str
+    root_cause_summary: Optional[str] = None
+    confidence: Optional[float] = None
+    evidence_items: list[EvidenceDTO] = Field(default_factory=list)
+    raw_evidence_summary: Optional[dict[str, Any]] = None
+    files_fetched: list[dict[str, Any]] = Field(default_factory=list)
+    slack_threads: list[dict[str, Any]] = Field(default_factory=list)
+    fix_verified: bool = False
+    fix_unavailable_reason: Optional[str] = None
 
 
 class IncidentDetailDTO(IncidentDTO):

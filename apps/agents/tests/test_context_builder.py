@@ -329,6 +329,7 @@ def test_ast_scan_no_write_capable_imports() -> None:
         "query_prometheus_metrics",
         "query_github_deploys",
         "search_similar_incidents",
+        "search_slack_history",
     }
 
 
@@ -366,5 +367,7 @@ def test_output_validates_incident_context_schema() -> None:
         assert context_obj.context_completeness_pct == 100
         assert context_obj.missing_sources == []
         assert len(context_obj.timeline) > 0
+        assert "raw_evidence_record" in res
+        assert "sources" in res["raw_evidence_record"]
 
     asyncio.run(_test())

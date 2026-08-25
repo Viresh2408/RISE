@@ -221,6 +221,7 @@ class AgentStepResult(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     llm_trace_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_evidence_record: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -264,6 +265,11 @@ class Evidence(Base):
     type: Mapped[str] = mapped_column(String(100), nullable=False)
     reference: Mapped[str] = mapped_column(Text, nullable=False)
     excerpt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    commit_sha: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    line_start: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    line_end: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ImpactAssessment(Base):

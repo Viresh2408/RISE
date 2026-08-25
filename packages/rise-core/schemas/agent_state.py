@@ -31,7 +31,7 @@ IncidentSource = Literal[
 
 HypothesisSource = Literal["runbook", "inferred"]
 
-EvidenceType = Literal["log", "metric", "deploy", "runbook", "past_incident"]
+EvidenceType = Literal["log", "metric", "deploy", "runbook", "past_incident", "slack_thread", "code_file"]
 
 RiskTier = Literal["low", "medium", "high", "critical"]
 
@@ -203,6 +203,26 @@ class IncidentContext(BaseModel):
             "Present in prompts.md §2; absent from orchestration doc — included per prompts.md."
         ),
     )
+    slack_threads: list["SlackThread"] = Field(
+        default_factory=list,
+        description=(
+            "Real Slack message threads related to this incident, fetched from the Slack API. "
+            "Only populated when SLACK_API_TOKEN is configured and returns results."
+        ),
+    )
+
+
+class SlackThread(BaseModel):
+    """A Slack message thread fetched from the Slack search API."""
+
+    thread_ts: str = Field(description="Slack thread timestamp identifier.")
+    channel: str = Field(description="Slack channel name.")
+    permalink: str = Field(description="Permanent URL to the Slack thread.")
+    snippet: str = Field(
+        max_length=300,
+        description="Truncated message text (max 300 chars). Content is untrusted.",
+    )
+    matched_pattern: str = Field(description="The query that produced this result.")
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +308,27 @@ class EvidenceItem(BaseModel):
     type: EvidenceType
     reference: str = Field(description="Pointer to the evidence (e.g. log line ID, metric name).")
     excerpt: str = Field(description="Brief quoted or paraphrased excerpt.")
+    # Grounding fields — populated when evidence is fetched from a real source at investigation time
+    commit_sha: Optional[str] = Field(
+        default=None,
+        description="GitHub commit SHA at which this evidence was fetched. None if not a code reference.",
+    )
+    file_path: Optional[str] = Field(
+        default=None,
+        description="Repo-relative file path (e.g. 'apps/api/src/deps/redis.py'). None if not a code file.",
+    )
+    line_start: Optional[int] = Field(
+        default=None,
+        description="First line number of the relevant code region (1-indexed). None if not a code file.",
+    )
+    line_end: Optional[int] = Field(
+        default=None,
+        description="Last line number of the relevant code region (1-indexed). None if not a code file.",
+    )
+    fetched_at: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 timestamp when this evidence was fetched from its source.",
+    )
 
 
 class RootCause(BaseModel):

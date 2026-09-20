@@ -26,17 +26,18 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 # Allow running from repo root without installing the package.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "packages", "rise-core"))
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
 
 from db.models import KnowledgeEntry, Service, Tenant
+from db.session import SessionLocal
 from knowledge_service.client import get_qdrant_client
 from knowledge_service.service import KnowledgeService
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/rise_dev")
 
 # ---------------------------------------------------------------------------
 # 10 realistic historical incidents
@@ -167,12 +168,16 @@ HISTORICAL_INCIDENTS: list[dict] = [
 
 
 def main() -> None:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-    Session = sessionmaker(bind=engine)
-    session = Session()
+    session = SessionLocal()
 
-    qdrant_client = get_qdrant_client()
-    svc = KnowledgeService(qdrant_client=qdrant_client)
+    try:
+        qdrant_client = get_qdrant_client()
+        svc = KnowledgeService(qdrant_client=qdrant_client)
+    except Exception as exc:
+        print(f"[ERROR] Could not initialize Qdrant client ({exc}).")
+        print("Ensure Qdrant is running ('docker-compose up -d qdrant') and try again.")
+        session.close()
+        return
 
     # Ensure a default tenant exists.
     tenant = session.execute(select(Tenant).limit(1)).scalar_one_or_none()
@@ -234,8 +239,8 @@ def main() -> None:
         print(f"{i:<4} {data['title'][:54]:<55} {vector_id:<38}")
 
     session.close()
-    print("\n✅ Seed complete.  Qdrant collection: incidents_v1")
-    print(f"   Verify at: http://localhost:6333/dashboard#/collections/incidents_v1")
+    print("\n[OK] Seed complete.  Qdrant collection: incidents_v1")
+    print("   Verify at: http://localhost:6333/dashboard#/collections/incidents_v1")
 
 
 if __name__ == "__main__":

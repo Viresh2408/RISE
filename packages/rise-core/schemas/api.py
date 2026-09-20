@@ -1,6 +1,6 @@
 """API DTO Schemas for RISE API Service."""
 
-from typing import Any, Generic, List, Optional, TypeVar
+from typing import Any, Generic, Optional, TypeVar
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")
@@ -72,6 +72,7 @@ class ActionPlanDTO(BaseModel):
     rollback_plan: Optional[str] = None
     code_fix_snippet: Optional[dict[str, Any]] = None
     fix_unavailable_reason: Optional[str] = None
+    is_simulated: Optional[bool] = False
 
 
 class EvidenceChainDTO(BaseModel):
@@ -154,6 +155,9 @@ class ImpactDTO(BaseModel):
     severity: str
     estimated_users_affected: int
     business_impact_notes: str
+    # Deterministic composite risk score — computed by compute_risk_score(),
+    # never by the LLM. 0 = not yet computed (e.g. no agent run yet).
+    risk_score: int = 0
 
 
 class DecisionDTO(BaseModel):
@@ -171,6 +175,10 @@ class ActionApproveRequest(BaseModel):
 class ActionApproveResponse(BaseModel):
     status: str
     execution_status: str
+    is_simulated: Optional[bool] = False
+    action_type: Optional[str] = None
+    message: Optional[str] = None
+    execution_log: Optional[dict] = None
     commit_sha: Optional[str] = None
     commit_url: Optional[str] = None
     commit_message: Optional[str] = None

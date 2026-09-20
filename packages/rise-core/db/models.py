@@ -288,6 +288,12 @@ class ImpactAssessment(Base):
     severity: Mapped[str] = mapped_column(String(50), nullable=False)
     estimated_users_affected: Mapped[int] = mapped_column(Integer, nullable=False)
     business_impact_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Deterministic composite risk score (0-100) computed by compute_risk_score().
+    # Never set by the LLM — populated by the impact_analyzer node after schema validation.
+    # server_default='0' ensures existing rows default to 0 without a backfill.
+    risk_score: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
 
 
 class RiskPolicy(Base):

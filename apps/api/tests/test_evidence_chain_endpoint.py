@@ -46,7 +46,6 @@ from db.models import (
     RootCause,
     Service,
     Tenant,
-    User,
 )
 # pyrefly: ignore [missing-import]
 from apps.api.src.main import app

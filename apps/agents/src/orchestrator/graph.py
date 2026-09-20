@@ -7,7 +7,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Optional, TypedDict
 
 _CORE_PATH = str(Path(__file__).resolve().parents[4] / "packages" / "rise-core")
 if _CORE_PATH not in sys.path:

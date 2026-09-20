@@ -12,16 +12,13 @@ Matches Definition of Done and user requirements:
 """
 
 import uuid
-import pytest
-from unittest.mock import MagicMock, patch
-from fastapi import HTTPException
+from unittest.mock import patch
 
 from langgraph.checkpoint.memory import MemorySaver
 
 from apps.agents.src.orchestrator.graph import (
     AgentState,
     create_orchestrator_graph,
-    run_incident,
 )
 from apps.agents.src.services.slack_card import format_slack_approval_card
 from apps.api.src.services.approval_lock import (

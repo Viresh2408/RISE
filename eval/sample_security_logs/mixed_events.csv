@@ -1,0 +1,16 @@
+timestamp,src_ip,dst_ip,src_port,dst_port,protocol,action,bytes_out,event_type,severity,host,user,message
+2026-09-01T01:00:00Z,203.0.113.44,10.0.0.10,45100,22,TCP,deny,,firewall_deny,MEDIUM,gw-01,,Firewall DENY SSH attempt from known bad-actor subnet
+2026-09-01T01:00:02Z,203.0.113.44,10.0.0.10,45101,22,TCP,deny,,firewall_deny,MEDIUM,gw-01,,Firewall DENY SSH repeated probe
+2026-09-01T02:14:01Z,203.0.113.44,10.0.0.11,45231,22,TCP,alert,,port_scan,HIGH,bastion,,Port scan pattern detected — SSH port probe from 203.0.113.44
+2026-09-01T02:14:02Z,203.0.113.44,10.0.0.11,45231,22,TCP,alert,,authentication_failure,HIGH,bastion,root,SSH brute-force: failed password for root from 203.0.113.44
+2026-09-01T02:14:03Z,203.0.113.44,10.0.0.11,45232,22,TCP,alert,,authentication_failure,HIGH,bastion,admin,SSH brute-force: failed password for admin from 203.0.113.44
+2026-09-01T02:14:05Z,203.0.113.44,10.0.0.11,45233,22,TCP,alert,,authentication_failure,HIGH,bastion,ubuntu,SSH brute-force: failed password for ubuntu from 203.0.113.44
+2026-09-01T03:01:05Z,198.51.100.77,10.0.0.1,0,9200,TCP,deny,,firewall_deny,HIGH,gw-01,,Firewall DENY Elasticsearch port 9200 probe from external host
+2026-09-01T03:01:06Z,198.51.100.77,10.0.0.1,0,27017,TCP,deny,,firewall_deny,HIGH,gw-01,,Firewall DENY MongoDB port probe from external host
+2026-09-01T03:01:08Z,198.51.100.77,10.0.0.1,0,2375,TCP,deny,,firewall_deny,CRITICAL,gw-01,,Firewall DENY Docker daemon API probe — critical exposure risk
+2026-09-01T04:10:00Z,10.0.2.99,10.0.0.20,0,443,HTTPS,alert,,ids_sql_injection,HIGH,api.internal,anonymous,IDS ALERT SQL Injection: UNION SELECT attack on /api/products
+2026-09-01T04:10:04Z,10.0.2.99,10.0.0.20,0,443,HTTPS,alert,,ids_sql_injection,HIGH,api.internal,anonymous,"IDS ALERT SQL Injection: auth bypass via OR '1'='1'"
+2026-09-01T04:10:09Z,10.0.2.99,10.0.0.20,0,443,HTTPS,block,,ids_sql_injection,CRITICAL,api.internal,anonymous,IDS BLOCK stacked query DROP TABLE attack
+2026-09-01T05:00:00Z,10.0.3.15,185.199.110.0,0,443,HTTPS,alert,524288,anomalous_outbound,HIGH,worker-node-03,python3,Anomalous outbound: 512 KB burst to external IP
+2026-09-01T05:00:45Z,10.0.3.15,185.199.110.0,0,443,HTTPS,alert,2097152,anomalous_outbound,HIGH,worker-node-03,python3,Anomalous outbound: 2 MB sustained upload possible exfiltration
+2026-09-01T05:02:00Z,10.0.3.15,185.199.110.0,0,443,HTTPS,block,8388608,anomalous_outbound,CRITICAL,worker-node-03,python3,DLP BLOCK: 8 MB cumulative upload to unapproved external IP — exfil suspected

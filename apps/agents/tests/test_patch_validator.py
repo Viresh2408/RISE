@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from apps.agents.src.engines.patch_validator import (
     PatchError,

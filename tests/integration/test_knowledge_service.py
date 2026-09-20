@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.abspath("."))
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker, Session
 
-from db.models import Base, KnowledgeEntry, Service, Tenant
+from db.models import KnowledgeEntry, Tenant
 from knowledge_service.client import get_qdrant_client
 from knowledge_service.schemas import KnowledgeFilter
 from knowledge_service.service import COLLECTION_NAME, KnowledgeService

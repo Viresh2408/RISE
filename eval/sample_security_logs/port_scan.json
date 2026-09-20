@@ -1,0 +1,122 @@
+[
+  {
+    "timestamp": "2026-08-31T23:14:01Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 21,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49201 -> 10.0.2.15:21 (FTP) — no established session"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:02Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 22,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49202 -> 10.0.2.15:22 (SSH) — source not in allowlist"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:02Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 23,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49203 -> 10.0.2.15:23 (Telnet) — no established session"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:03Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 80,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49204 -> 10.0.2.15:80 (HTTP) — rate-limit exceeded"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:03Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 443,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49205 -> 10.0.2.15:443 (HTTPS) — rate-limit exceeded"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:04Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 3306,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49206 -> 10.0.2.15:3306 (MySQL) — no established session"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:04Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 5432,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49207 -> 10.0.2.15:5432 (PostgreSQL) — no established session"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:05Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 6379,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49208 -> 10.0.2.15:6379 (Redis) — no established session"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:05Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 8080,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49209 -> 10.0.2.15:8080 (HTTP-Alt) — rate-limit exceeded"
+  },
+  {
+    "timestamp": "2026-08-31T23:14:06Z",
+    "src_ip": "203.0.113.88",
+    "dst_ip": "10.0.2.15",
+    "dst_port": 9200,
+    "protocol": "TCP",
+    "action": "deny",
+    "event_type": "firewall_deny",
+    "bytes_out": 0,
+    "host": "fw-edge-01",
+    "message": "DENY TCP 203.0.113.88:49210 -> 10.0.2.15:9200 (Elasticsearch) — no established session"
+  }
+]

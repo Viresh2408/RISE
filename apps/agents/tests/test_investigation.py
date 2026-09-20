@@ -5,8 +5,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
-import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import pytest
 
 from pydantic import ValidationError

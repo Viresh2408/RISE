@@ -11,7 +11,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from llm_gateway.gateway import LLMGateway, call_structured
-from schemas.agent_state import RootCause, EvidenceItem
+from schemas.agent_state import RootCause
 
 logger = logging.getLogger(__name__)
 

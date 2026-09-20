@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from llm_gateway.gateway import LLMGateway, call_structured
-from schemas.agent_state import ImpactAssessment
+from schemas.agent_state import ImpactAssessment, compute_risk_score
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,15 @@ async def run_impact_analyzer_agent(
 
     blast_radius_services, topology_missing = resolve_blast_radius_services(state, db=db)
 
+    # --- Signal-strength inputs for compute_risk_score ---
+    # Confidence: prefer root_cause confidence; fallback to 0.5 (neutral)
+    rc_confidence: float = float(root_cause.get("confidence", 0.5))
+    # Correlated events = similar past incidents found + evidence items cited
+    correlated_events: int = len(
+        state.get("similar_past_incidents", [])
+        or root_cause.get("similar_past_incidents", [])
+    ) + len(root_cause.get("evidence", []))
+
     user_prompt = build_user_prompt(
         root_cause=root_cause,
         blast_radius_services=blast_radius_services,
@@ -187,6 +196,16 @@ async def run_impact_analyzer_agent(
                     f"LLM altered blast_radius_services. Expected {blast_radius_services}, got {res.blast_radius_services}"
                 )
 
+            # Deterministic risk_score — computed after LLM validation, never by the LLM
+            res.risk_score = compute_risk_score(
+                blast_radius_services=blast_radius_services,
+                severity=res.severity,
+                estimated_users_affected=res.estimated_users_affected,
+                confidence=rc_confidence,
+                correlated_events_count=correlated_events,
+                topology_missing=topology_missing,
+            )
+
             result_obj = res
             break
         except Exception as exc:
@@ -200,11 +219,20 @@ async def run_impact_analyzer_agent(
                     if topology_missing
                     else "Fallback impact assessment: LLM Gateway call failed or output rejected."
                 )
+                fallback_score = compute_risk_score(
+                    blast_radius_services=blast_radius_services,
+                    severity=fallback_severity,
+                    estimated_users_affected=None,
+                    confidence=rc_confidence,
+                    correlated_events_count=correlated_events,
+                    topology_missing=topology_missing,
+                )
                 result_obj = ImpactAssessment(
                     blast_radius_services=blast_radius_services,
                     severity=fallback_severity,
                     estimated_users_affected=None,
                     business_impact_notes=fallback_notes,
+                    risk_score=fallback_score,
                 )
 
     new_state = dict(state)

@@ -25,6 +25,8 @@ cryptography = "^50.0.0"
 langgraph = "^1.2.10"
 langgraph-checkpoint-postgres = "^3.1.1"
 psycopg-binary = "^3.3.4"
+python-multipart = "^0.0.9"
+reportlab = "^4.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
@@ -37,6 +39,9 @@ schemathesis = "^3.25.0"
 
 [tool.pytest.ini_options]
 pythonpath = [".", "packages/rise-core"]
+testpaths = ["tests", "apps/agents/tests", "apps/api/tests", "packages/rise-core/tests"]
+norecursedirs = ["node_modules", ".pnpm", "scripts", ".venv", "venv", "dist", "build"]
+addopts = "-m 'not integration'"
 markers = [
     "integration: marks tests as integration tests requiring live Postgres + Qdrant (deselect with '-m not integration')",
     "anyio: marks tests as async using anyio",

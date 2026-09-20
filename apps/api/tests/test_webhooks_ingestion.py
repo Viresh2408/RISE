@@ -30,7 +30,6 @@ import json
 import os
 import time
 import uuid
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -63,7 +62,6 @@ from db.models import Incident, IntegrationConfig
 from apps.api.src.deps.db import get_db
 from apps.api.src.deps.redis import get_redis_client
 from apps.api.src.services.ingestion.signature_verifier import (
-    FakeSNSVerifier,
     FakeFailVerifier,
     FakeVerifier,
     RealSlackVerifier,
@@ -658,7 +656,8 @@ class TestSlackReplayWindow:
     _SECRET = "test-slack-signing-secret"
 
     def _make_slack_sig(self, ts: int, body: bytes) -> str:
-        import hashlib, hmac as _hmac
+        import hashlib
+        import hmac as _hmac
         base = f"v0:{ts}:{body.decode('utf-8', errors='replace')}"
         hex_sig = _hmac.new(self._SECRET.encode(), base.encode(), hashlib.sha256).hexdigest()
         return f"v0={hex_sig}"

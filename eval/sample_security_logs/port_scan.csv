@@ -1,0 +1,21 @@
+timestamp,src_ip,dst_ip,dst_port,protocol,action,bytes_out,event_type,message
+2026-09-01T03:01:00Z,198.51.100.77,10.0.0.1,22,TCP,deny,,firewall_deny,Firewall DENY: connection attempt to port 22 from external host
+2026-09-01T03:01:01Z,198.51.100.77,10.0.0.1,23,TCP,deny,,firewall_deny,Firewall DENY: Telnet probe from 198.51.100.77
+2026-09-01T03:01:02Z,198.51.100.77,10.0.0.1,80,TCP,deny,,firewall_deny,Firewall DENY: HTTP probe
+2026-09-01T03:01:02Z,198.51.100.77,10.0.0.1,443,TCP,deny,,firewall_deny,Firewall DENY: HTTPS probe
+2026-09-01T03:01:03Z,198.51.100.77,10.0.0.1,3389,TCP,deny,,firewall_deny,Firewall DENY: RDP probe from 198.51.100.77
+2026-09-01T03:01:03Z,198.51.100.77,10.0.0.1,3306,TCP,deny,,firewall_deny,Firewall DENY: MySQL probe from 198.51.100.77
+2026-09-01T03:01:04Z,198.51.100.77,10.0.0.1,5432,TCP,deny,,firewall_deny,Firewall DENY: PostgreSQL probe
+2026-09-01T03:01:04Z,198.51.100.77,10.0.0.1,6379,TCP,deny,,firewall_deny,Firewall DENY: Redis probe from external
+2026-09-01T03:01:05Z,198.51.100.77,10.0.0.1,8080,TCP,deny,,firewall_deny,Firewall DENY: alt-HTTP probe
+2026-09-01T03:01:05Z,198.51.100.77,10.0.0.1,8443,TCP,deny,,firewall_deny,Firewall DENY: alt-HTTPS probe
+2026-09-01T03:01:06Z,198.51.100.77,10.0.0.1,27017,TCP,deny,,firewall_deny,Firewall DENY: MongoDB probe from 198.51.100.77
+2026-09-01T03:01:06Z,198.51.100.77,10.0.0.1,9200,TCP,deny,,firewall_deny,Firewall DENY: Elasticsearch probe
+2026-09-01T03:01:07Z,198.51.100.77,10.0.0.1,4369,TCP,deny,,firewall_deny,Firewall DENY: EPMD/RabbitMQ probe
+2026-09-01T03:01:07Z,198.51.100.77,10.0.0.1,5900,TCP,deny,,firewall_deny,Firewall DENY: VNC probe from external
+2026-09-01T03:01:08Z,198.51.100.77,10.0.0.1,11211,TCP,deny,,firewall_deny,Firewall DENY: Memcached probe from 198.51.100.77
+2026-09-01T03:01:08Z,198.51.100.77,10.0.0.1,2375,TCP,deny,,firewall_deny,Firewall DENY: Docker daemon API probe — high severity
+2026-09-01T03:01:09Z,198.51.100.77,10.0.0.1,2376,TCP,deny,,firewall_deny,Firewall DENY: Docker TLS API probe
+2026-09-01T03:01:09Z,198.51.100.77,10.0.0.1,6443,TCP,deny,,firewall_deny,Firewall DENY: Kubernetes API server probe
+2026-09-01T03:01:10Z,198.51.100.88,10.0.0.2,22,TCP,deny,,firewall_deny,Firewall DENY: SSH probe from second attacker host 198.51.100.88
+2026-09-01T03:01:11Z,198.51.100.88,10.0.0.2,445,TCP,deny,,firewall_deny,Firewall DENY: SMB probe — ransomware lateral movement indicator

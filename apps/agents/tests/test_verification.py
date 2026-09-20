@@ -8,7 +8,6 @@ Enforces:
 
 import pytest
 from apps.agents.src.nodes.verification import (
-    evaluate_rule_based_verification,
     run_verification_agent,
 )
 

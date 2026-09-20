@@ -10,13 +10,13 @@ Enforces:
 
 from __future__ import annotations
 
-import logging, uuid
+import logging
 from typing import Any, Dict, Optional
 
-from mcp_client.gateway import MCPGateway, ToolBlockedError, MCPToolTimeoutError
+from mcp_client.gateway import MCPGateway
 from mcp_client.hash import compute_action_plan_hash
 from mcp_client.lock import ResourceLockManager, ResourceLockedException
-from schemas.agent_state import ActionPlan, ActionStep, ExecutionLog
+from schemas.agent_state import ActionPlan, ExecutionLog
 
 logger = logging.getLogger(__name__)
 

@@ -31,7 +31,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
-from sqlalchemy.types import JSON, String
 
 from sqlalchemy.pool import StaticPool
 
@@ -49,10 +48,9 @@ TEST_JWT_SECRET = "test-supabase-secret-rise-unit-tests"
 os.environ["SUPABASE_JWT_SECRET"] = TEST_JWT_SECRET
 os.environ["RISE_TEST_MODE"] = "0"
 
-import sqlalchemy as _sa
 
 from db.base import Base
-from db.models import AuditEvent, Incident, Service, Comment, Tenant, User, verify_hash_chain
+from db.models import AuditEvent, Incident, Service, Tenant, User, verify_hash_chain
 from apps.api.src.main import app
 from apps.api.src.deps.db import get_db
 

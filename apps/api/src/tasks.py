@@ -66,7 +66,7 @@ def check_approval_sla_timeout_task_impl(db_session: Optional[Any] = None) -> in
 
     if db_session is not None:
         try:
-            from db.models import Incident, RemediationAction
+            from db.models import RemediationAction
             rows = (
                 db_session.query(RemediationAction)
                 .filter(RemediationAction.status == "pending_approval")

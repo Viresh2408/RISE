@@ -1,6 +1,4 @@
-"""RISE Core Schemas."""
-
-from .api import *
+from .api import *  # noqa: F401, F403
 from .agent_state import (
     # Enumerations
     SeverityHint,
@@ -30,6 +28,7 @@ from .agent_state import (
     InvestigationResult,
     RootCause,
     ImpactAssessment,
+    compute_risk_score,
     ActionPlan,
     Decision,
     ExecutionLog,
@@ -55,6 +54,7 @@ __all__ = [
     "IncidentUpdateRequest",
     "IncidentDTO",
     "IncidentDetailDTO",
+    "ImpactDTO",
     # Enumerations
     "SeverityHint",
     "Severity",
@@ -83,6 +83,7 @@ __all__ = [
     "InvestigationResult",
     "RootCause",
     "ImpactAssessment",
+    "compute_risk_score",
     "ActionPlan",
     "Decision",
     "ExecutionLog",

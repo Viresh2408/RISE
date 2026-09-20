@@ -14,7 +14,7 @@ Formats interactive Slack block-kit cards matching prompts.md §9 field-for-fiel
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 

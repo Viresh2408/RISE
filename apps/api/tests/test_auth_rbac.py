@@ -25,10 +25,8 @@ Any future router addition MUST also add a row here — the table acts as a livi
 
 from __future__ import annotations
 
-import importlib
 import os
 import time
-import types
 import uuid
 
 import jwt
@@ -56,7 +54,7 @@ def visit_UUID(element, compiler, **kw):
     return "TEXT"
 
 from db.base import Base
-from db.models import Tenant, Incident, Service, Comment
+from db.models import Tenant, Incident
 from apps.api.src.deps.db import get_db
 from apps.api.src.routers.incidents import _parse_uuid
 

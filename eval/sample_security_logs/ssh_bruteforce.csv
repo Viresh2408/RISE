@@ -1,0 +1,13 @@
+timestamp,src_ip,src_port,dst_ip,dst_port,protocol,user,action,event_type,host,message
+2026-08-31T22:01:03Z,185.220.101.47,54321,10.0.1.20,22,TCP,root,failed_auth,authentication_failure,prod-bastion-01,Failed password for root from 185.220.101.47 port 54321 ssh2
+2026-08-31T22:01:09Z,185.220.101.47,54322,10.0.1.20,22,TCP,root,failed_auth,authentication_failure,prod-bastion-01,Failed password for root from 185.220.101.47 port 54322 ssh2
+2026-08-31T22:01:15Z,185.220.101.47,54323,10.0.1.20,22,TCP,admin,failed_auth,authentication_failure,prod-bastion-01,Failed password for invalid user admin from 185.220.101.47 port 54323 ssh2
+2026-08-31T22:01:20Z,185.220.101.47,54324,10.0.1.20,22,TCP,ubuntu,failed_auth,authentication_failure,prod-bastion-01,Failed password for invalid user ubuntu from 185.220.101.47 port 54324 ssh2
+2026-08-31T22:01:26Z,185.220.101.47,54325,10.0.1.20,22,TCP,pi,failed_auth,authentication_failure,prod-bastion-01,Failed password for invalid user pi from 185.220.101.47 port 54325 ssh2
+2026-08-31T22:01:31Z,185.220.101.47,54326,10.0.1.20,22,TCP,deploy,failed_auth,authentication_failure,prod-bastion-01,Failed password for deploy from 185.220.101.47 port 54326 ssh2
+2026-08-31T22:01:37Z,185.220.101.47,54327,10.0.1.20,22,TCP,git,failed_auth,authentication_failure,prod-bastion-01,Failed password for invalid user git from 185.220.101.47 port 54327 ssh2
+2026-08-31T22:01:42Z,185.220.101.47,54328,10.0.1.20,22,TCP,postgres,failed_auth,authentication_failure,prod-bastion-01,Failed password for postgres from 185.220.101.47 port 54328 ssh2
+2026-08-31T22:01:48Z,185.220.101.47,54329,10.0.1.20,22,TCP,ec2-user,failed_auth,authentication_failure,prod-bastion-01,Failed password for invalid user ec2-user from 185.220.101.47 port 54329 ssh2
+2026-08-31T22:01:53Z,185.220.101.47,54330,10.0.1.20,22,TCP,root,failed_auth,authentication_failure,prod-bastion-01,Failed password for root from 185.220.101.47 port 54330 ssh2
+2026-08-31T22:02:01Z,185.220.101.47,54331,10.0.1.20,22,TCP,root,failed_auth,authentication_failure,prod-bastion-01,Failed password for root from 185.220.101.47 port 54331 ssh2
+2026-08-31T22:02:07Z,185.220.101.47,54332,10.0.1.20,22,TCP,oracle,failed_auth,authentication_failure,prod-bastion-01,Failed password for invalid user oracle from 185.220.101.47 port 54332 ssh2

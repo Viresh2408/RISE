@@ -380,7 +380,65 @@ class RootCause(BaseModel):
 #   prompts.md §5: exact same 4 fields.
 #
 # NO MISMATCH. ✅
+#
+# EXTENSION (risk_score): added deterministically by compute_risk_score() after
+# LLM output is validated — never produced by the LLM itself.
 # ---------------------------------------------------------------------------
+
+
+def compute_risk_score(
+    *,
+    blast_radius_services: list[str],
+    severity: str,
+    estimated_users_affected: Optional[int],
+    confidence: float = 0.5,
+    correlated_events_count: int = 0,
+    topology_missing: bool = False,
+) -> int:
+    """Compute a deterministic risk_score in [0, 100] from blast-radius/severity
+    inputs plus signal-strength (confidence × correlated events).
+
+    Formula (buckets sum to 100):
+      severity_component   = severity_weight × 40
+      blast_component      = min(len(services) / 10, 1.0) × 30
+      users_component      = min(users / 10_000, 1.0) × 20
+      signal_component     = clamp(confidence × (1 + 0.1 × events), 0, 1) × 10
+
+    topology_missing guard: score is forced to at least 70 when topology data
+    is absent (matches the SEV1-fallback guardrail §2.6 in impact_analyzer.py).
+
+    This function is pure Python — the LLM never touches this field.
+    """
+    severity_weights: dict[str, float] = {
+        "SEV1": 1.0,
+        "SEV2": 0.75,
+        "SEV3": 0.50,
+        "SEV4": 0.25,
+    }
+    severity_weight = severity_weights.get(severity.upper(), 0.25)
+
+    blast_weight = min(len(blast_radius_services) / 10.0, 1.0)
+
+    users = estimated_users_affected if estimated_users_affected is not None else 0
+    users_weight = min(users / 10_000.0, 1.0)
+
+    # Signal-strength amplifier: confidence scaled by correlated-events bonus
+    raw_signal = confidence * (1.0 + 0.1 * correlated_events_count)
+    signal_weight = max(0.0, min(raw_signal, 1.0))
+
+    raw_score = (
+        severity_weight * 40.0
+        + blast_weight * 30.0
+        + users_weight * 20.0
+        + signal_weight * 10.0
+    )
+    score = int(round(max(0.0, min(raw_score, 100.0))))
+
+    # Topology-missing guard: treat unknown blast radius as conservatively high-risk
+    if topology_missing:
+        score = max(score, 70)
+
+    return score
 
 
 class ImpactAssessment(BaseModel):
@@ -404,6 +462,16 @@ class ImpactAssessment(BaseModel):
     )
     business_impact_notes: str = Field(
         description="Plain-language impact summary for a non-technical stakeholder."
+    )
+    risk_score: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description=(
+            "Deterministic composite risk score (0–100) computed by compute_risk_score() "
+            "after LLM output is validated. Combines severity, blast radius, estimated users, "
+            "and signal strength (confidence × correlated events). Never set by the LLM."
+        ),
     )
 
 
@@ -467,6 +535,10 @@ class ActionPlan(BaseModel):
             "available tools. Triggers human escalation."
         ),
     )
+    is_simulated: bool = Field(
+        default=False,
+        description="True if action is a simulated security response action."
+    )
 
     @model_validator(mode="after")
     def rollback_plan_required_unless_manual(self) -> "ActionPlan":
@@ -502,6 +574,10 @@ class Decision(BaseModel):
     )
     action_plan: ActionPlan = Field(
         description="LLM-produced action plan (prompts.md §6 ActionPlan schema)."
+    )
+    is_simulated: bool = Field(
+        default=False,
+        description="True if decision involves a simulated security response action."
     )
 
     @model_validator(mode="after")

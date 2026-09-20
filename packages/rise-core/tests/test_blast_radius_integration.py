@@ -21,14 +21,13 @@ Run with::
 
 from __future__ import annotations
 
-import os
 import sys
 import uuid
 from pathlib import Path
 from typing import Generator
 
 import pytest
-from sqlalchemy import Column, Engine, String, Table, Text, create_engine, event, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 # Ensure package root is on path.
@@ -36,7 +35,7 @@ _pkg_root = Path(__file__).parent.parent
 if str(_pkg_root) not in sys.path:
     sys.path.insert(0, str(_pkg_root))
 
-from topology.blast_radius import BlastRadiusResult, blast_radius
+from topology.blast_radius import blast_radius
 
 
 # ---------------------------------------------------------------------------

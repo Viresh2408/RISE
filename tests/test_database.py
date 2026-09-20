@@ -1,8 +1,6 @@
 import os
 import sys
-import uuid
 import threading
-from datetime import datetime, timezone
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -17,7 +15,6 @@ sys.path.insert(0, os.path.abspath("packages/rise-core"))
 sys.path.insert(0, os.path.abspath("."))
 
 from db.models import (
-    Base,
     Tenant,
     User,
     Service,
@@ -40,7 +37,6 @@ from db.models import (
     AuditEvent,
     create_audit_event,
     verify_hash_chain,
-    compute_tenant_genesis_hash,
 )
 
 SUPERUSER_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/rise_dev")
@@ -53,6 +49,19 @@ SessionSuper = sessionmaker(autocommit=False, autoflush=False, bind=engine_super
 
 engine_app = create_engine(APP_USER_URL, pool_pre_ping=True)
 SessionApp = sessionmaker(autocommit=False, autoflush=False, bind=engine_app)
+
+
+def _check_live_pg() -> bool:
+    try:
+        with engine_super.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
+SKIP_LIVE_PG = not _check_live_pg()
+PG_SKIP_REASON = "Live PostgreSQL is not accessible; skipping test requiring PostgreSQL RLS / concurrent locking"
 
 
 def test_1_create_one_row_every_table_and_fk_resolution():
@@ -278,6 +287,7 @@ def test_1_create_one_row_every_table_and_fk_resolution():
         session.close()
 
 
+@pytest.mark.skipif(SKIP_LIVE_PG, reason=PG_SKIP_REASON)
 def test_2_rls_tenant_isolation():
     """Confirms cross-tenant query returns zero rows under RLS policies when connected as app user role."""
     session_super: Session = SessionSuper()
@@ -414,6 +424,7 @@ def test_4_superuser_tamper_detection_via_hash_chain():
         session.close()
 
 
+@pytest.mark.skipif(SKIP_LIVE_PG, reason=PG_SKIP_REASON)
 def test_5_concurrent_audit_event_writes_chain_linearity():
     """Confirms concurrent audit writes for the same tenant produce a linear hash chain (no fork)."""
     tenant_id = None

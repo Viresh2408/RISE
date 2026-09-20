@@ -1,10 +1,12 @@
 """Actions and Decisions Router."""
 
+import logging
 from typing import Any, Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+
+logger = logging.getLogger(__name__)
 from schemas import (
     ActionApproveRequest,
-    ActionApproveResponse,
     ActionExecuteRequest,
     ActionExecuteResponse,
     ActionModifyRequest,
@@ -44,7 +46,8 @@ async def get_decision(
 
 def _apply_remediation_code_fix(incident_id: str) -> dict:
     """Applies code fix to target codebase file and generates GitHub PR info."""
-    import os, subprocess
+    import os
+    import subprocess
     file_path = os.path.abspath("apps/api/src/deps/auth.py")
     pr_num = (abs(hash(incident_id)) % 90) + 10
     pr_url = f"https://github.com/Viresh2408/RISE/pull/{pr_num}"
@@ -134,6 +137,21 @@ async def approve_action(
 
         mark_approval_decided(action_id, "approved")
 
+        SIMULATED_SECURITY_ACTIONS = {
+            "block_ip_address",
+            "isolate_host",
+            "revoke_session_token",
+            "quarantine_file",
+            "flag_for_soc_review",
+        }
+
+        # Check if action_id or incident matches a simulated security response action
+        is_simulated_action = (
+            action_id in SIMULATED_SECURITY_ACTIONS
+            or any(sec_act in action_id.lower() for sec_act in SIMULATED_SECURITY_ACTIONS)
+            or (req and getattr(req, "action_plan", None) and getattr(req, "action_plan", {}).get("action_type") in SIMULATED_SECURITY_ACTIONS)
+        )
+
         # 1. Update Incident status in DB to resolved upon approval
         DEMO_INCIDENT_MAP = {
             "inc-auth-pool-01": ("PostgreSQL Connection Pool Saturation in auth-service", "packages/rise-core/db/session.py"),
@@ -147,7 +165,7 @@ async def approve_action(
             "inc-redis-pool-09": ("Redis Connection Churn & Missing ConnectionPool in api-gateway", "apps/api/src/deps/redis.py"),
         }
 
-        inc_title = "PostgreSQL Connection Pool Saturation in auth-service"
+        inc_title = "Security Incident Response"
         target_file = "packages/rise-core/db/session.py"
 
         if incident_id in DEMO_INCIDENT_MAP:
@@ -161,10 +179,39 @@ async def approve_action(
                 inc_uuid = uuid.UUID(incident_id)
                 inc = db.execute(select(Incident).where(Incident.id == inc_uuid)).scalar_one_or_none()
                 if inc:
-                    inc.status = "resolved"
-                    inc.updated_at = datetime.now(timezone.utc)
                     inc_title = inc.title
-                    if inc.affected_service_id:
+
+                    # --- Fix 1: status handling ---
+                    # For monitor-detected incidents do NOT mark as resolved here.
+                    # The GitHub monitor will auto-resolve once the fix is confirmed
+                    # on the main branch (after the PR is merged).
+                    # For all other incidents, keep the original resolved-on-approve behaviour.
+                    _is_monitor_incident = (
+                        inc.description
+                        and "[rise-monitor-meta:" in inc.description
+                    )
+                    if _is_monitor_incident:
+                        # PR is pending — keep visible so the monitor can auto-resolve
+                        inc.status = "investigating"
+                    else:
+                        inc.status = "resolved"
+
+                    inc.updated_at = datetime.now(timezone.utc)
+
+                    # --- Fix 2: target_file from monitor metadata ---
+                    # Prefer the file_path embedded by the monitor over service-name heuristics.
+                    _monitor_file = None
+                    if _is_monitor_incident:
+                        try:
+                            from apps.api.src.services.github_monitor import extract_monitor_meta
+                            _meta = extract_monitor_meta(inc.description)
+                            _monitor_file = (_meta or {}).get("file_path")
+                        except Exception:
+                            pass
+
+                    if _monitor_file:
+                        target_file = _monitor_file
+                    elif inc.affected_service_id:
                         svc = db.execute(select(Service).where(Service.id == inc.affected_service_id)).scalar_one_or_none()
                         if svc:
                             if "webhook" in svc.name or "stripe" in svc.name:
@@ -173,11 +220,45 @@ async def approve_action(
                                 target_file = "apps/api/src/deps/auth.py"
                             elif "checkout" in svc.name or "db" in svc.name:
                                 target_file = "packages/rise-core/db/session.py"
+
                     db.commit()
             except Exception:
                 pass
 
-        # 2. Execute Real GitHub Commit & Local Remediation Patch
+        # If this is a simulated security action, execute through Execution Agent & MCP Gateway with full audit trail
+        if is_simulated_action:
+            sec_tool = action_id if action_id in SIMULATED_SECURITY_ACTIONS else (
+                next((s for s in SIMULATED_SECURITY_ACTIONS if s in action_id.lower()), "flag_for_soc_review")
+            )
+            sim_plan = {
+                "action_type": sec_tool,
+                "action_steps": [{"tool": sec_tool, "params": {"incident_id": incident_id, "simulated": True}}],
+                "rollback_plan": [{"tool": "flag_for_soc_review", "params": {"incident_id": incident_id, "status": "rollback"}}],
+                "plan_rationale": f"Simulated security response: {sec_tool}",
+            }
+            approved_hash = compute_action_plan_hash(sim_plan)
+            sim_state = {
+                "tenant_id": str(user.tenant_id),
+                "incident_id": incident_id,
+                "action_plan": sim_plan,
+                "approved_plan_hash": approved_hash,
+                "environment": "production",
+                "human_approval": "approved",
+            }
+            exec_result = await run_execution_agent(sim_state, db_session=db)
+            exec_log = exec_result.get("execution_log", {})
+
+            res = {
+                "status": "approved",
+                "execution_status": "executed",
+                "is_simulated": True,
+                "action_type": sec_tool,
+                "message": f"Simulated security response action '{sec_tool}' executed with full audit trail.",
+                "execution_log": exec_log,
+            }
+            return build_response(data=res)
+
+        # 2. Execute Real GitHub Commit & Local Remediation Patch for code fix actions
         from apps.api.src.services.github_service import commit_remediation_to_github
         github_result = await commit_remediation_to_github(
             incident_id=incident_id,
@@ -194,7 +275,8 @@ async def approve_action(
 
         # 3. Backend-driven execution triggered automatically
         try:
-            import threading, asyncio
+            import threading
+            import asyncio
             action_plan = {
                 "action_type": "apply_github_patch",
                 "action_steps": [{"tool": "create_pr", "params": {"file": target_file, "commit": github_result.get("commit_sha"), "pr_number": github_result.get("pr_number"), "pr_url": github_result.get("pr_url")}}],

@@ -79,5 +79,7 @@ async def run_decision_plan_agent(
     new_state["requires_approval"] = decision.requires_approval
     new_state["risk_tier"] = decision.risk_tier
     new_state["action_plan"] = decision_dict["action_plan"]
+    new_state["is_simulated"] = decision.is_simulated
 
     return new_state
+

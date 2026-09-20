@@ -123,6 +123,16 @@ class MCPGateway:
             "post_message",
             "post_interactive_approval",
             "update_message",
+            # Simulated Security Response Actions & Rollback tools
+            "block_ip_address",
+            "isolate_host",
+            "revoke_session_token",
+            "quarantine_file",
+            "flag_for_soc_review",
+            "unblock_ip_address",
+            "reconnect_host",
+            "restore_file",
+            "restore_session_token",
         }
         read_tools = {
             "get_pod_status",
@@ -304,6 +314,27 @@ class MCPGateway:
                         from slack_server import MCPSlackServer
                         self.slack_server = MCPSlackServer()
                     return self.slack_server.handle_tool_call(tool_name, params)
+                elif tool_name in (
+                    "block_ip_address",
+                    "isolate_host",
+                    "revoke_session_token",
+                    "quarantine_file",
+                    "flag_for_soc_review",
+                    "unblock_ip_address",
+                    "reconnect_host",
+                    "restore_file",
+                    "restore_session_token",
+                ):
+                    # Simulated Security Response Actions execute as logged, audited no-op actions
+                    logger.info("Executing simulated security response action: %s with params: %s", tool_name, params)
+                    return {
+                        "status": "success",
+                        "simulated": True,
+                        "tool": tool_name,
+                        "action": tool_name,
+                        "message": f"Simulated security response action '{tool_name}' executed and audited successfully.",
+                        "params": params,
+                    }
                 else:
                     raise ValueError(f"No registered server for tool '{tool_name}'")
 

@@ -14,11 +14,9 @@ from pydantic import ValidationError
 
 from schemas.agent_state import (
     ActionPlan,
-    ActionStep,
     AgentState,
     CheckResult,
     Decision,
-    EvidenceItem,
     ExecutionLog,
     GraphExecutionStep,
     Hypothesis,
@@ -26,11 +24,8 @@ from schemas.agent_state import (
     IncidentContext,
     IncidentEvent,
     LogExcerpt,
-    MetricSnapshot,
-    RecentDeploy,
     RootCause,
     SimilarIncident,
-    TimelineEntry,
     VerificationResult,
 )
 

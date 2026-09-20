@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from llm_gateway.exceptions import AllProvidersFailedError, StructuredOutputError
 from llm_gateway.gateway import LLMGateway, call_structured
 from schemas.agent_state import IncidentContext
 from apps.agents.src.nodes.slack_history_fetcher import search_slack_history, SlackThread

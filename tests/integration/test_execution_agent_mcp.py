@@ -11,10 +11,8 @@ Verifies:
 
 from __future__ import annotations
 
-import asyncio
 import pytest
 import uuid
-from typing import Any, Dict
 
 import sys
 from pathlib import Path
@@ -29,9 +27,8 @@ from mcp_client.gateway import MCPGateway, ToolBlockedError
 from mcp_client.hash import compute_action_plan_hash
 from mcp_client.lock import ResourceLockManager, ResourceLockedException, clear_all_in_memory_locks
 from kubernetes_server import MCPKubernetesServer
-from aws_server import MCPAWSServer
 from github_server import MCPGitHubServer
-from apps.agents.src.nodes.execution import run_execution_agent, ActionPlanChangedError
+from apps.agents.src.nodes.execution import run_execution_agent
 from schemas.agent_state import ActionPlan, ActionStep
 
 

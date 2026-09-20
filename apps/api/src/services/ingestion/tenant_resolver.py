@@ -141,7 +141,6 @@ def resolve_tenant_from_integration(
     None
         No match — the caller must reject the request and audit-log the attempt.
     """
-    import os
     stmt = (
         select(IntegrationConfig)
         .where(

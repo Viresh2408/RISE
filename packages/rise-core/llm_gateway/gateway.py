@@ -49,7 +49,7 @@ from llm_gateway.exceptions import (
     ProviderError,
     StructuredOutputError,
 )
-from llm_gateway.providers import ProviderAdapter, RawLLMResponse, make_adapter
+from llm_gateway.providers import ProviderAdapter, make_adapter
 from llm_gateway.usage import record_usage
 
 if TYPE_CHECKING:
@@ -128,7 +128,7 @@ class LLMGateway:
             t0 = time.monotonic()
             try:
                 raw = await adapter.complete(prompt)
-            except ProviderError as exc:
+            except ProviderError:
                 latency_ms = int((time.monotonic() - t0) * 1000)
                 record_usage(
                     db,

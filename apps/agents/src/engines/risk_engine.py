@@ -169,9 +169,19 @@ class RiskEngine:
     ) -> RiskEvaluation:
         """Local pure-Python fallback evaluation matching OPA Rego rules when OPA service is not running in local test environment."""
         critical_actions = {"delete_database", "drop_table", "force_destroy", "code_fix_pr", "destroy_cluster"}
-        high_actions = {"rollback_deployment", "failover_database", "modify_traffic", "scale_deployment"}
-        medium_actions = {"restart_service", "clear_cache", "flush_redis", "restart_pod", "config_update", "scale", "rollback"}
-        low_actions = {"restart_pod", "clear_cache", "flush_redis", "scale_deployment", "config_update", "scale", "rollback"}
+        high_actions = {
+            "rollback_deployment", "failover_database", "modify_traffic", "scale_deployment",
+            "isolate_host", "block_ip_address", "revoke_session_token",
+        }
+        medium_actions = {
+            "restart_service", "clear_cache", "flush_redis", "restart_pod", "config_update", "scale", "rollback",
+            "quarantine_file", "reconnect_host", "unblock_ip_address", "restore_file", "restore_session_token",
+        }
+        low_actions = {
+            "restart_pod", "clear_cache", "flush_redis", "scale_deployment", "config_update", "scale", "rollback",
+            "quarantine_file", "reconnect_host", "unblock_ip_address", "restore_file", "restore_session_token",
+            "flag_for_soc_review",
+        }
 
         is_critical = (
             action_type in critical_actions

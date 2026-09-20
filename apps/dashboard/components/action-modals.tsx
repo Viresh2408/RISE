@@ -19,6 +19,8 @@ import {
   ExternalLink,
   Clock,
   FileCode,
+  Terminal,
+  GitBranch,
 } from 'lucide-react';
 import { tx } from '../lib/typography';
 
@@ -48,6 +50,7 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
   const [reevaluatedRiskTier, setReevaluatedRiskTier] = useState<RiskTier | null>(null);
 
   const canApprove = hasRole('approver');
+  const isMonitorDetected = Boolean(recommendedPlan?.code_fix_snippet?.is_monitor_detected);
 
   // Real GitHub Commit State
   const [commitResult, setCommitResult] = useState<ActionApproveResponse | null>(null);
@@ -150,87 +153,154 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
     }
   };
 
+  const isSimulated =
+    Boolean(action.is_simulated) ||
+    Boolean(recommendedPlan?.is_simulated) ||
+    Boolean(commitResult?.is_simulated) ||
+    ['block_ip_address', 'isolate_host', 'revoke_session_token', 'quarantine_file', 'flag_for_soc_review'].some(
+      (sec) =>
+        action.name?.toLowerCase().includes(sec) ||
+        (recommendedPlan?.steps && recommendedPlan.steps.some((st) => st.toLowerCase().includes(sec)))
+    );
+
   if (action.status !== 'pending_approval' || commitResult) {
     return (
       <div className="space-y-4">
         {commitResult && (
-          <div className="rounded-xl border border-[#22C55E]/40 bg-[#0A1A12] p-5 space-y-4 shadow-xl animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-2.5 text-xs font-mono font-bold text-[#4ADE80]">
-                <GitPullRequest className="w-4 h-4 text-[#22C55E]" />
-                <span>
-                  {commitResult.pr_number
-                    ? `GitHub Pull Request #${commitResult.pr_number} Pushed`
-                    : 'GitHub Remediation PR & Commit Pushed'}
-                </span>
-                <span className="rounded bg-[#22C55E]/20 px-2 py-0.5 text-[10px] text-[#22C55E] border border-[#22C55E]/30">
-                  {commitResult.branch || 'fix/remediation'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {commitResult.pr_url && (
-                  <a
-                    href={commitResult.pr_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#22C55E] px-3.5 py-2 text-xs font-bold text-[#0E0B14] hover:bg-[#22C55E]/90 transition-all shadow"
-                  >
-                    <GitPullRequest className="w-3.5 h-3.5" />
-                    <span>Open Pull Request on GitHub</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                )}
-                {commitResult.commit_url && (
-                  <a
-                    href={commitResult.commit_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#22C55E]/40 bg-[#0E0B14] px-3 py-2 text-xs font-bold text-[#22C55E] hover:bg-[#22C55E]/10 transition-all shadow"
-                  >
-                    <GitCommit className="w-3.5 h-3.5" />
-                    <span>View Commit</span>
-                  </a>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-lg bg-[#050B08] border border-[#22C55E]/20 p-3.5 font-mono text-xs space-y-2.5 text-[#E8E2D9]">
-              <div className="flex items-center justify-between text-[11px] text-[#6B6560]">
-                <span className="flex items-center gap-1.5 text-[#4ADE80] font-semibold">
-                  <FileCode className="w-3.5 h-3.5" />
-                  {commitResult.file_modified || 'packages/rise-core/db/session.py'}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  {commitResult.commit_timestamp ? new Date(commitResult.commit_timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}
-                </span>
-              </div>
-              <div className="text-xs text-[#FAF7F2] font-semibold whitespace-pre-line leading-relaxed">
-                {commitResult.commit_message || `fix(remediation): apply automated fix for incident ${incidentId.slice(0, 8)}`}
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-[#8B5CF6] pt-1 border-t border-[#22C55E]/10">
-                <div className="flex items-center gap-2">
-                  <span>Commit SHA:</span>
-                  <code className="bg-[#8B5CF6]/15 px-2 py-0.5 rounded border border-[#8B5CF6]/30 font-mono text-[#D8B4FE]">
-                    {commitResult.commit_sha ? commitResult.commit_sha.slice(0, 10) : '101a1992ff'}
-                  </code>
+          commitResult.is_simulated || (isSimulated && !commitResult.commit_sha) ? (
+            <div className="rounded-xl border border-[#8B5CF6]/40 bg-[#120B24] p-5 space-y-4 shadow-xl animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-2.5 text-xs font-mono font-bold text-[#C084FC]">
+                  <ShieldAlert className="w-4 h-4 text-[#8B5CF6]" />
+                  <span>
+                    Simulated Security Action Executed
+                  </span>
+                  <span className="rounded bg-[#8B5CF6]/20 px-2 py-0.5 text-[10px] text-[#A78BFA] border border-[#8B5CF6]/30 uppercase font-bold tracking-wider">
+                    SIMULATED • AUDITED NO-OP
+                  </span>
                 </div>
-                <span className="text-[#22C55E] text-[10px] font-semibold">✓ Verified on Origin</span>
+                <span className="text-[11px] font-mono text-[#22C55E] flex items-center gap-1.5 font-semibold">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Audit Trail Recorded</span>
+                </span>
+              </div>
+
+              <div className="rounded-lg bg-[#080410] border border-[#8B5CF6]/20 p-3.5 font-mono text-xs space-y-2.5 text-[#E8E2D9]">
+                <div className="flex items-center justify-between text-[11px] text-[#6B6560]">
+                  <span className="flex items-center gap-1.5 text-[#C084FC] font-semibold">
+                    <Terminal className="w-3.5 h-3.5" />
+                    Action: {commitResult.action_type || action.name || 'Security Response Action'}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {commitResult.commit_timestamp ? new Date(commitResult.commit_timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className="text-xs text-[#FAF7F2] font-semibold whitespace-pre-line leading-relaxed">
+                  {commitResult.message || `Simulated security response action executed and logged to audit trail.`}
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-[#8B5CF6] pt-1 border-t border-[#8B5CF6]/15">
+                  <div className="flex items-center gap-2">
+                    <span>Audit Status:</span>
+                    <code className="bg-[#8B5CF6]/15 px-2 py-0.5 rounded border border-[#8B5CF6]/30 font-mono text-[#D8B4FE]">
+                      AuditEvent Logged (DB Session Recorded)
+                    </code>
+                  </div>
+                  <span className="text-[#22C55E] text-[10px] font-semibold">✓ Verified Pipeline</span>
+                </div>
+              </div>
+
+              {/* Navigation back to Incidents list */}
+              <div className="flex items-center justify-between pt-2 border-t border-[#8B5CF6]/20">
+                <span className="text-xs text-[#A8A29E]">Simulated action logged in audit log with full tenant isolation.</span>
+                <button
+                  onClick={() => router.push('/incidents')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F2] hover:bg-[#FAF7F2]/90 text-[#0E0B14] px-4 py-2 text-xs font-bold transition-all shadow-md"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Return to Incidents Console</span>
+                </button>
               </div>
             </div>
+          ) : (
+            <div className="rounded-xl border border-[#22C55E]/40 bg-[#0A1A12] p-5 space-y-4 shadow-xl animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-2.5 text-xs font-mono font-bold text-[#4ADE80]">
+                  <GitPullRequest className="w-4 h-4 text-[#22C55E]" />
+                  <span>
+                    {commitResult.pr_number
+                      ? `GitHub Pull Request #${commitResult.pr_number} Pushed`
+                      : 'GitHub Remediation PR & Commit Pushed'}
+                  </span>
+                  <span className="rounded bg-[#22C55E]/20 px-2 py-0.5 text-[10px] text-[#22C55E] border border-[#22C55E]/30">
+                    {commitResult.branch || 'fix/remediation'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {commitResult.pr_url && (
+                    <a
+                      href={commitResult.pr_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#22C55E] px-3.5 py-2 text-xs font-bold text-[#0E0B14] hover:bg-[#22C55E]/90 transition-all shadow"
+                    >
+                      <GitPullRequest className="w-3.5 h-3.5" />
+                      <span>Open Pull Request on GitHub</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  {commitResult.commit_url && (
+                    <a
+                      href={commitResult.commit_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#22C55E]/40 bg-[#0E0B14] px-3 py-2 text-xs font-bold text-[#22C55E] hover:bg-[#22C55E]/10 transition-all shadow"
+                    >
+                      <GitCommit className="w-3.5 h-3.5" />
+                      <span>View Commit</span>
+                    </a>
+                  )}
+                </div>
+              </div>
 
-            {/* Navigation back to Incidents list */}
-            <div className="flex items-center justify-between pt-2 border-t border-[#22C55E]/20">
-              <span className="text-xs text-[#A8A29E]">Remediation successfully applied & pushed to repository.</span>
-              <button
-                onClick={() => router.push('/incidents')}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F2] hover:bg-[#FAF7F2]/90 text-[#0E0B14] px-4 py-2 text-xs font-bold transition-all shadow-md"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                <span>Return to Incidents Console</span>
-              </button>
+              <div className="rounded-lg bg-[#050B08] border border-[#22C55E]/20 p-3.5 font-mono text-xs space-y-2.5 text-[#E8E2D9]">
+                <div className="flex items-center justify-between text-[11px] text-[#6B6560]">
+                  <span className="flex items-center gap-1.5 text-[#4ADE80] font-semibold">
+                    <FileCode className="w-3.5 h-3.5" />
+                    {commitResult.file_modified || 'packages/rise-core/db/session.py'}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {commitResult.commit_timestamp ? new Date(commitResult.commit_timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className="text-xs text-[#FAF7F2] font-semibold whitespace-pre-line leading-relaxed">
+                  {commitResult.commit_message || `fix(remediation): apply automated fix for incident ${incidentId.slice(0, 8)}`}
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-[#8B5CF6] pt-1 border-t border-[#22C55E]/10">
+                  <div className="flex items-center gap-2">
+                    <span>Commit SHA:</span>
+                    <code className="bg-[#8B5CF6]/15 px-2 py-0.5 rounded border border-[#8B5CF6]/30 font-mono text-[#D8B4FE]">
+                      {commitResult.commit_sha ? commitResult.commit_sha.slice(0, 10) : '101a1992ff'}
+                    </code>
+                  </div>
+                  <span className="text-[#22C55E] text-[10px] font-semibold">✓ Verified on Origin</span>
+                </div>
+              </div>
+
+              {/* Navigation back to Incidents list */}
+              <div className="flex items-center justify-between pt-2 border-t border-[#22C55E]/20">
+                <span className="text-xs text-[#A8A29E]">Remediation successfully applied & pushed to repository.</span>
+                <button
+                  onClick={() => router.push('/incidents')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F2] hover:bg-[#FAF7F2]/90 text-[#0E0B14] px-4 py-2 text-xs font-bold transition-all shadow-md"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Return to Incidents Console</span>
+                </button>
+              </div>
             </div>
-          </div>
+          )
         )}
 
         <div className="rounded-xl border border-[#E8E2D9]/15 bg-[#151121] p-4 flex items-center justify-between">
@@ -263,6 +333,20 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
 
   return (
     <div className="space-y-4">
+      {isSimulated && (
+        <div className="flex items-center gap-2.5 rounded-lg border border-[#8B5CF6]/30 bg-[#8B5CF6]/10 p-3.5 text-xs text-[#E8E2D9]">
+          <ShieldAlert className="h-4 w-4 text-[#8B5CF6] flex-shrink-0" />
+          <div className="flex-1 space-y-0.5">
+            <span className="font-semibold text-[#C084FC] uppercase text-[10px] tracking-wider block font-mono">
+              Simulated Security Response Action
+            </span>
+            <span className="text-[11px] text-[#A8A29E]">
+              Executes as an audited no-op action, exercising the exact same human-in-the-loop approval, execution, and audit-logging pipeline.
+            </span>
+          </div>
+        </div>
+      )}
+
       {errorBanner && (
         <div className="flex items-center gap-2.5 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3.5 text-xs text-[#EF4444]">
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
@@ -283,7 +367,7 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
           }`}
         >
           <CheckCircle2 className="h-4 w-4" />
-          <span>{loading ? 'Processing...' : 'Approve Action'}</span>
+          <span>{loading ? 'Processing...' : isMonitorDetected ? 'Approve & Push Fix to GitHub' : 'Approve Action'}</span>
         </button>
 
         <button

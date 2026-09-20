@@ -9,9 +9,7 @@ import unittest.mock as mock
 from typing import Any, Dict
 import httpx
 
-from schemas.agent_state import ActionPlan, ActionStep, Decision
-from apps.agents.src.engines.similarity_engine import SimilarityEngine, SimilarityResult
-from apps.agents.src.engines.confidence_engine import ConfidenceEngine, RiskPolicy
+from schemas.agent_state import ActionPlan, ActionStep
 from apps.agents.src.engines.risk_engine import RiskEngine, RiskEvaluation
 from apps.agents.src.engines.action_planner import ActionPlanner
 from apps.agents.src.engines.decision_engine import DecisionEngine
@@ -455,4 +453,59 @@ async def test_action_planner_includes_real_file_content_when_present():
     assert '<real_file_content path="apps/api/src/deps/redis.py"' in called_prompt
     assert "line1\nline2" in called_prompt
     assert plan.requires_manual_plan is False
+
+
+@pytest.mark.anyio
+async def test_decision_engine_sets_is_simulated_for_security_actions():
+    """Test: DecisionEngine sets is_simulated=True for all simulated security response actions."""
+    simulated_actions = [
+        "block_ip_address",
+        "isolate_host",
+        "revoke_session_token",
+        "quarantine_file",
+        "flag_for_soc_review",
+    ]
+    for action in simulated_actions:
+        state = make_sample_state(
+            action_type=action,
+            environment="production",
+            confidence=0.95,
+            rollback_plan=[ActionStep(tool="unblock_ip_address" if action == "block_ip_address" else "flag_for_soc_review", params={})],
+        )
+        mock_planner = mock.AsyncMock()
+        mock_planner.generate_plan.return_value = state["_mock_action_plan"]
+        engine = DecisionEngine(action_planner=mock_planner)
+        decision = await engine.evaluate_and_plan(
+            state=state,
+            use_local_risk_fallback=True,
+        )
+        assert decision.is_simulated is True
+        assert decision.action_plan.is_simulated is True
+
+
+
+@pytest.mark.anyio
+async def test_run_decision_plan_agent_simulated_security_action():
+    """Test: run_decision_plan_agent populates is_simulated=True in node return state."""
+    state = make_sample_state(
+        action_type="isolate_host",
+        environment="production",
+        confidence=0.95,
+        rollback_plan=[ActionStep(tool="reconnect_host", params={"host": "host-123"})],
+    )
+    mock_planner = mock.AsyncMock()
+    mock_planner.generate_plan.return_value = state["_mock_action_plan"]
+
+    mock_engine = DecisionEngine(action_planner=mock_planner)
+    updated_state = await run_decision_plan_agent(
+        state,
+        use_local_risk_fallback=True,
+        decision_engine=mock_engine,
+    )
+
+    assert updated_state["is_simulated"] is True
+    assert updated_state["decision"]["is_simulated"] is True
+    assert updated_state["action_plan"]["action_type"] == "isolate_host"
+    assert updated_state["action_plan"]["is_simulated"] is True
+
 

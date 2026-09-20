@@ -5,10 +5,8 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
-import json
 import os
-from unittest.mock import MagicMock, patch
-import pytest
+from unittest.mock import patch
 
 from apps.agents.src.nodes.root_cause import (
     READ_ONLY_TOOLS,
@@ -158,7 +156,6 @@ def has_real_llm_credentials() -> bool:
 def test_real_llm_confidence_calibration() -> None:
     """Verify confidence calibration using a real LLM-backed execution or structured calibration mock."""
     async def _test():
-        from unittest.mock import patch
         from schemas.agent_state import RootCause, EvidenceItem
 
         # Scenario A: Thin / Ambiguous Evidence

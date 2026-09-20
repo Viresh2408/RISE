@@ -13,7 +13,7 @@ import hashlib
 import sys
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -21,7 +21,6 @@ from sqlalchemy import (
     Float,
     Integer,
     String,
-    Text,
     func,
     text,
 )

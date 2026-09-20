@@ -14,7 +14,17 @@ write_tools := {
     "update_ssm_parameter",
     "create_branch",
     "create_pr",
-    "run_workflow"
+    "run_workflow",
+    # Simulated Security Response Actions & Rollback tools
+    "block_ip_address",
+    "isolate_host",
+    "revoke_session_token",
+    "quarantine_file",
+    "flag_for_soc_review",
+    "unblock_ip_address",
+    "reconnect_host",
+    "restore_file",
+    "restore_session_token"
 }
 
 # Allowed read-only tools for Context Builder / Investigation Agents

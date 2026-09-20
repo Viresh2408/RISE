@@ -65,7 +65,7 @@ from apps.api.src.services.ingestion.tenant_resolver import (
     extract_source_identifier,
     resolve_tenant_from_integration,
 )
-from db.models import AuditEvent, Incident, IncidentEvent, create_audit_event
+from db.models import Incident, IncidentEvent, create_audit_event
 
 logger = logging.getLogger(__name__)
 

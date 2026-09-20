@@ -1280,4 +1280,28 @@ export const apiClient = {
 
   disconnectIntegration: (token: string, type: string) =>
     request<void>(`/integrations/${type}`, { method: 'DELETE', token }),
+
+  // ── GitHub File Preview ──────────────────────────────────────────────
+  /**
+   * Fetch the live GitHub file status for a monitor-detected bug pattern.
+   * READ-ONLY — nothing is written to GitHub.
+   */
+  getGithubFilePreview: (token: string, filePath: string, patternId?: string | null) => {
+    const query = new URLSearchParams({ file_path: filePath });
+    if (patternId) query.append('pattern_id', patternId);
+    return request<{
+      file_path: string;
+      github_url: string;
+      file_sha: string | null;
+      ref: string;
+      is_bug_present: boolean | null;
+      is_fixed: boolean | null;
+      pattern_id: string | null;
+      pattern_title: string | null;
+      pattern_description: string | null;
+      current_content_snippet: string | null;
+      proposed_diff: string | null;
+      error?: string;
+    }>(`/github/file-preview?${query.toString()}`, { method: 'GET', token });
+  },
 };

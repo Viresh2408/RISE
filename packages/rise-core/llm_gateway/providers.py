@@ -15,8 +15,6 @@ mockable in tests and avoids pinning to provider SDK release cycles.
 
 from __future__ import annotations
 
-import asyncio
-import json
 from typing import Any, Protocol, runtime_checkable
 
 import httpx

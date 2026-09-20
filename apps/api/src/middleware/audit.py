@@ -42,7 +42,6 @@ tenant-level lock.
 """
 
 from typing import Any, Dict, Optional
-import uuid
 
 from sqlalchemy.orm import Session
 

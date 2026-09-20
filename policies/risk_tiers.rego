@@ -6,9 +6,9 @@ default risk_level = "critical"
 
 # Defined action categories
 critical_actions := {"delete_database", "drop_table", "force_destroy", "code_fix_pr", "destroy_cluster"}
-high_actions := {"rollback_deployment", "failover_database", "modify_traffic", "scale_deployment"}
-medium_actions := {"restart_service", "clear_cache", "flush_redis", "restart_pod"}
-low_actions := {"restart_pod", "clear_cache", "flush_redis", "scale_deployment"}
+high_actions := {"rollback_deployment", "failover_database", "modify_traffic", "scale_deployment", "isolate_host", "block_ip_address", "revoke_session_token"}
+medium_actions := {"restart_service", "clear_cache", "flush_redis", "restart_pod", "quarantine_file", "reconnect_host", "unblock_ip_address", "restore_file", "restore_session_token"}
+low_actions := {"restart_pod", "clear_cache", "flush_redis", "scale_deployment", "quarantine_file", "reconnect_host", "unblock_ip_address", "restore_file", "restore_session_token", "flag_for_soc_review"}
 
 # Helpers
 is_critical {

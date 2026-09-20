@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from schemas.agent_state import ActionPlan, Decision
 from .action_planner import ActionPlanner
-from .confidence_engine import ConfidenceEngine, ConfidenceEvaluation, RiskPolicy
+from .confidence_engine import ConfidenceEngine, ConfidenceEvaluation
 from .risk_engine import RiskEngine, RiskEvaluation
 from .similarity_engine import SimilarityEngine, SimilarityResult
 
@@ -161,8 +161,30 @@ class DecisionEngine:
         if action_type == "code_fix_pr":
             requires_approval = True
 
+        # Identify simulated security actions (audited no-op actions)
+        simulated_security_actions = {
+            "block_ip_address",
+            "isolate_host",
+            "revoke_session_token",
+            "quarantine_file",
+            "flag_for_soc_review",
+            "unblock_ip_address",
+            "reconnect_host",
+            "restore_file",
+            "restore_session_token",
+        }
+        is_simulated = (
+            action_type in simulated_security_actions
+            or getattr(action_plan, "is_simulated", False)
+            or any(step.tool in simulated_security_actions for step in getattr(action_plan, "action_steps", []))
+        )
+        if is_simulated and not action_plan.is_simulated:
+            action_plan = action_plan.model_copy(update={"is_simulated": True})
+
         return Decision(
             risk_tier=risk_eval.risk_tier,
             requires_approval=requires_approval,
             action_plan=action_plan,
+            is_simulated=is_simulated,
         )
+

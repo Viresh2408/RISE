@@ -21,12 +21,14 @@ allow a commit to sneak through without an audit write.
 from __future__ import annotations
 
 import base64
-import json
+import difflib
+import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -52,13 +54,115 @@ from schemas import (
     IncidentUpdateRequest,
     ReinvestigateResponse,
 )
+from schemas.agent_state import compute_risk_score
 from apps.api.src.deps import get_db, require_role, UserContext
 from apps.api.src.middleware.audit import write_audit_event
 from apps.api.src.middleware.envelope import build_meta, build_response
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
-# ── Serialisation helpers ──────────────────────────────────────────────────────
+# ── Serialisation helpers ──────────────────────────────────────────────
+
+
+def _build_github_fix_evidence(monitor_meta: dict) -> Optional[dict]:
+    """Fetch the current (buggy) file from GitHub and compute the proposed fix diff.
+
+    This is called when an incident was created by the GitHub monitor so that
+    the incident detail page can show operators:
+      1. The exact buggy code currently in GitHub  (before-state)
+      2. The exact code change that will be applied on approval (unified diff)
+
+    Nothing is written to GitHub — this is a pure read + compute operation.
+
+    Returns a ``code_fix_snippet`` dict compatible with ``ActionPlanDTO`` or
+    ``None`` if the file cannot be fetched.
+    """
+    file_path = monitor_meta.get("file_path", "")
+    pattern_id = monitor_meta.get("pattern_id", "")
+    if not file_path:
+        return None
+
+    github_token = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_READ_TOKEN", "")
+    github_repo = os.getenv("GITHUB_REPO", "Viresh2408/RISE")
+    ref = os.getenv("GITHUB_MONITOR_REF", "main")
+    owner_repo = github_repo.split("/", 1)
+    owner = owner_repo[0] if len(owner_repo) == 2 else "Viresh2408"
+    repo = owner_repo[1] if len(owner_repo) == 2 else "RISE"
+    github_url = f"https://github.com/{owner}/{repo}/blob/{ref}/{file_path}"
+
+    try:
+        from apps.agents.src.nodes.github_file_fetcher import fetch_github_file_content
+        file_result = fetch_github_file_content(
+            file_path,
+            repo=github_repo,
+            ref=ref,
+            github_token=github_token,
+            timeout_s=8.0,
+        )
+    except Exception as exc:
+        logger.debug("[get_incident] Could not fetch GitHub file %s: %s", file_path, exc)
+        file_result = None
+
+    current_content = file_result.content if file_result else monitor_meta.get("buggy_context", "")
+    if not current_content:
+        return None
+
+    # Compute the proposed patch (what would be written on approval) using the
+    # same logic as github_service.apply_patch_to_text — read-only, no writes.
+    try:
+        from apps.api.src.services.github_service import apply_patch_to_text
+        incident_title = monitor_meta.get("title", file_path)
+        proposed_content = apply_patch_to_text(current_content, file_path, incident_title)
+    except Exception as exc:
+        logger.debug("[get_incident] Could not compute proposed patch: %s", exc)
+        proposed_content = current_content  # no diff available
+
+    if proposed_content == current_content:
+        # No change — pattern may already be fixed or patch logic had no match
+        diff_text = "# No automated patch available for this pattern."
+    else:
+        # Generate a readable unified diff
+        before_lines = current_content.splitlines(keepends=True)
+        after_lines = proposed_content.splitlines(keepends=True)
+        diff_lines = list(
+            difflib.unified_diff(
+                before_lines,
+                after_lines,
+                fromfile=f"a/{file_path}",
+                tofile=f"b/{file_path}",
+                lineterm="",
+            )
+        )
+        diff_text = "\n".join(diff_lines) if diff_lines else "# Files are identical — no changes."
+
+    # Determine approximate line range for the bug
+    buggy_context = monitor_meta.get("buggy_context", "")
+    lines_label = ""
+    if buggy_context:
+        first_line = buggy_context.splitlines()[0] if buggy_context.splitlines() else ""
+        # Extract line number from "  42: code" format
+        try:
+            line_num = int(first_line.split(":")[0].strip())
+            last_line_str = buggy_context.splitlines()[-1] if buggy_context.splitlines() else first_line
+            last_num = int(last_line_str.split(":")[0].strip())
+            lines_label = f"L{line_num}-L{last_num}"
+        except (ValueError, IndexError):
+            lines_label = "L1"
+
+    return {
+        "file": file_path,
+        "github_url": f"{github_url}#{lines_label}" if lines_label else github_url,
+        "lines": lines_label or "L1",
+        "commit_id": file_result.sha[:10] if file_result and file_result.sha else "HEAD",
+        "diff": diff_text,
+        # Extra fields surfaced in the UI
+        "is_monitor_detected": True,
+        "pattern_id": pattern_id,
+        "buggy_context": buggy_context,
+        "current_sha": file_result.sha if file_result else None,
+    }
 
 
 def _incident_to_dict(incident: Incident) -> Dict[str, Any]:
@@ -435,13 +539,35 @@ async def get_incident(
             "severity": ia_row.severity,
             "estimated_users_affected": ia_row.estimated_users_affected,
             "business_impact_notes": ia_row.business_impact_notes or "",
+            # Use DB-stored score if it was computed (>0), otherwise re-derive it.
+            # Re-derivation handles rows created before migration 0005.
+            "risk_score": ia_row.risk_score if getattr(ia_row, "risk_score", 0) > 0 else compute_risk_score(
+                blast_radius_services=blast_radius,
+                severity=ia_row.severity,
+                estimated_users_affected=ia_row.estimated_users_affected,
+                confidence=float((root_cause_data or {}).get("confidence", 0.5)),
+                correlated_events_count=len((root_cause_data or {}).get("evidence", [])),
+                topology_missing=False,
+            ),
         }
     else:
+        # Synthetic fallback — no agent run yet for this incident
+        fallback_blast = [service_name] if service_name else ["demo-app"]
+        fallback_users = 1500 if incident.severity == "SEV1" else 300
+        fallback_score = compute_risk_score(
+            blast_radius_services=fallback_blast,
+            severity=incident.severity,
+            estimated_users_affected=fallback_users,
+            confidence=float((root_cause_data or {}).get("confidence", 0.5)),
+            correlated_events_count=0,
+            topology_missing=False,
+        )
         impact_data = {
-            "blast_radius": [service_name] if service_name else ["demo-app"],
+            "blast_radius": fallback_blast,
             "severity": incident.severity,
-            "estimated_users_affected": 1500 if incident.severity == "SEV1" else 300,
+            "estimated_users_affected": fallback_users,
             "business_impact_notes": f"Potential service disruption affecting {service_name or 'target service'}.",
+            "risk_score": fallback_score,
         }
 
     # Fetch Remediation Actions
@@ -519,6 +645,44 @@ async def get_incident(
             "No automated action plan has been generated by the agent pipeline for this incident. "
             "Manual investigation required."
         )
+
+    # ── GitHub Monitor: fetch live buggy code + proposed diff ─────────────────
+    # If this incident was created by the GitHub monitor, we can fetch the
+    # current (still-buggy) file from GitHub and generate the proposed fix diff
+    # RIGHT NOW — without applying any changes. This lets the operator see
+    # exactly what's wrong and what will change BEFORE they click Approve.
+    monitor_meta = None
+    try:
+        from apps.api.src.services.github_monitor import extract_monitor_meta
+        monitor_meta = extract_monitor_meta(incident.description or "")
+    except Exception:
+        pass
+
+    if monitor_meta and not plan_code_fix:
+        try:
+            github_fix_evidence = _build_github_fix_evidence(monitor_meta)
+            if github_fix_evidence:
+                plan_code_fix = github_fix_evidence
+                # Override the generic "no plan" message with a monitor-specific one
+                if plan_fix_unavailable and "not been generated" in plan_fix_unavailable:
+                    plan_fix_unavailable = None
+                # Update action steps with human-readable description from monitor meta
+                if plan_steps == [f"Investigate and remediate {svc_label} — no automated plan available"]:
+                    plan_steps = [
+                        f"Review the detected bug pattern in {monitor_meta.get('file_path', svc_label)}",
+                        "Inspect the proposed code fix diff below",
+                        "Click 'Approve & Push Fix' to commit the automated patch to GitHub and open a PR",
+                        "Alternatively, click 'Customize' to modify the fix before approving",
+                    ]
+                if plan_desc.startswith("No verified automated plan"):
+                    plan_desc = (
+                        f"GitHub Monitor detected a code anti-pattern in "
+                        f"`{monitor_meta.get('file_path', svc_label)}`. "
+                        f"An automated fix patch has been computed and is ready for your review. "
+                        f"Approve to commit the patch to GitHub and open a Pull Request."
+                    )
+        except Exception as exc:
+            logger.debug("[get_incident] GitHub fix evidence build failed: %s", exc)
 
     recommended_action_payload: Dict[str, Any] = {
         "id": f"plan-{str(incident.id)[:8]}",
@@ -914,4 +1078,64 @@ async def get_evidence_chain(
         fix_unavailable_reason=fix_unavailable_reason,
     )
     return build_response(data=chain.model_dump())
+
+
+@router.get("/{incident_id}/report")
+async def get_incident_report(
+    incident_id: str,
+    format: str = Query("pdf", description="Report format: pdf, md, markdown, or json"),
+    user: UserContext = Depends(require_role("viewer")),
+    db: Session = Depends(get_db),
+):
+    """Generate and download an incident report deterministically from stored DB records.
+
+    Zero LLM re-derivation at display time — guarantees 100% audit accuracy to the real record.
+    Supports PDF (?format=pdf), Markdown (?format=md or ?format=markdown), and JSON (?format=json).
+    """
+    from apps.api.src.services.report_generator import (
+        build_incident_report_data,
+        generate_markdown_report,
+        generate_pdf_report,
+    )
+
+    tenant_id = _parse_uuid(user.tenant_id)
+    inc_uuid = _parse_uuid(incident_id)
+
+    report_data = build_incident_report_data(
+        db=db,
+        tenant_id=tenant_id,
+        incident_uuid=inc_uuid,
+    )
+
+    if not report_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": f"Incident {incident_id} not found", "details": {}},
+        )
+
+    fmt = format.lower().strip()
+    safe_title = incident_id
+
+    if fmt in ("md", "markdown"):
+        md_content = generate_markdown_report(report_data)
+        return Response(
+            content=md_content,
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition": f'attachment; filename="incident-report-{safe_title}.md"',
+            },
+        )
+    elif fmt == "json":
+        return build_response(data=report_data)
+    else:
+        # Default: PDF
+        pdf_bytes = generate_pdf_report(report_data)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="incident-report-{safe_title}.pdf"',
+            },
+        )
+
 

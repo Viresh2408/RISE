@@ -18,18 +18,14 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 import httpx
-import pytest
 
 from apps.agents.src.nodes.context_builder import (
     READ_ONLY_TOOLS,
     build_user_prompt,
     fetch_github_deploys,
     fetch_loki_logs,
-    fetch_prometheus_metrics,
-    fetch_similar_incidents,
     run_context_builder_agent,
 )
 from schemas.agent_state import IncidentContext

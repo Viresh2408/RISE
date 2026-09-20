@@ -1,0 +1,9 @@
+timestamp,src_ip,dst_ip,dst_port,protocol,action,event_type,host,user,severity,message
+2026-09-01T00:42:11Z,91.108.4.130,10.0.3.50,443,TCP,alert,ids_sql_injection,waf-prod-01,anonymous,HIGH,"SQL injection attempt detected: GET /api/users?id=1' OR '1'='1 HTTP/1.1"
+2026-09-01T00:42:14Z,91.108.4.130,10.0.3.50,443,TCP,alert,ids_sql_injection,waf-prod-01,anonymous,HIGH,"SQL injection attempt detected: GET /api/orders?filter=1; DROP TABLE orders;-- HTTP/1.1"
+2026-09-01T00:42:18Z,91.108.4.130,10.0.3.50,443,TCP,alert,ids_sql_injection,waf-prod-01,anonymous,CRITICAL,"SQL injection attempt detected: POST /login body=username=admin'--&password=x HTTP/1.1"
+2026-09-01T00:42:21Z,91.108.4.130,10.0.3.50,443,TCP,alert,ids_sql_injection,waf-prod-01,anonymous,CRITICAL,"SQL injection attempt detected: GET /search?q=' UNION SELECT username,password FROM users-- HTTP/1.1"
+2026-09-01T00:42:25Z,91.108.4.130,10.0.3.50,443,TCP,alert,ids_sql_injection,waf-prod-01,anonymous,HIGH,"SQL injection attempt detected: GET /products?cat=1 AND 1=2 UNION SELECT NULL,version()-- HTTP/1.1"
+2026-09-01T00:42:29Z,91.108.4.130,10.0.3.50,443,TCP,alert,ids_sql_injection,waf-prod-01,anonymous,HIGH,"SQL injection attempt detected: GET /api/items?id=1'; EXEC xp_cmdshell('whoami')-- HTTP/1.1"
+2026-09-01T00:42:33Z,91.108.4.130,10.0.3.50,443,TCP,alert,ids_sql_injection,waf-prod-01,anonymous,CRITICAL,"SQL injection attempt detected: GET /reports?from=2024-01-01' AND SLEEP(5)-- HTTP/1.1 (time-based blind)"
+2026-09-01T00:42:37Z,91.108.4.130,10.0.3.50,443,TCP,alert,ids_sql_injection,waf-prod-01,anonymous,HIGH,"SQL injection attempt detected: POST /api/feedback body=comment=test'); INSERT INTO admins(user,pass) VALUES('hack','hack')-- HTTP/1.1"

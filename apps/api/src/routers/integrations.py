@@ -6,7 +6,7 @@ Uses an in-process store (upgradeable to DB) for the demo environment.
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from schemas import IntegrationConnectResponse, IntegrationDTO
 from apps.api.src.deps import require_role, UserContext
 from apps.api.src.middleware.envelope import build_response

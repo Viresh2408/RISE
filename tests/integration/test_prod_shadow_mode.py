@@ -9,7 +9,6 @@ Tests:
 """
 
 import os
-import pytest
 from apps.agents.src.engines.risk_engine import RiskEngine
 
 

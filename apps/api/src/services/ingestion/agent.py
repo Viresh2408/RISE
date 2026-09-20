@@ -24,7 +24,6 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from pydantic import ValidationError
 
 from llm_gateway.exceptions import AllProvidersFailedError, StructuredOutputError
 from llm_gateway.gateway import LLMGateway, call_structured

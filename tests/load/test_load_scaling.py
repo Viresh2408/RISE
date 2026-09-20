@@ -10,7 +10,6 @@ Tests:
 4. Same-Resource Concurrency & Single-Use Approval Lock Idempotency (20+ concurrent requests on same resource)
 """
 
-import asyncio
 import math
 import random
 import time
@@ -18,12 +17,10 @@ import uuid
 from typing import Dict, List, Any
 import pytest
 
-from apps.agents.src.orchestrator.graph import run_incident, AgentState
+from apps.agents.src.orchestrator.graph import run_incident
 from apps.api.src.services.approval_lock import (
     acquire_single_use_approval_lock,
     release_single_use_approval_lock,
-    AlreadyDecidedError,
-    ConcurrentApprovalError,
 )
 
 

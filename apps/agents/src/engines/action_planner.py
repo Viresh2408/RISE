@@ -110,6 +110,17 @@ class ActionPlanner:
             "modify_traffic",
             "code_fix_pr",
             "escalate_to_human",
+            # Security Response Actions (Simulated Audited No-Op Catalog)
+            "block_ip_address",
+            "isolate_host",
+            "revoke_session_token",
+            "quarantine_file",
+            "flag_for_soc_review",
+            # Security Rollback Actions
+            "unblock_ip_address",
+            "reconnect_host",
+            "restore_file",
+            "restore_session_token",
         ]
 
     def build_prompts(
@@ -263,7 +274,6 @@ class ActionPlanner:
                 if patch_error is not None:
                     if attempt < max_attempts:
                         # Retry once with mismatch details in the prompt
-                        from apps.agents.src.engines.patch_validator import PatchError
                         mismatch_feedback = _RETRY_MISMATCH_TEMPLATE.format(
                             reason=patch_error.reason,
                             hunk_index=patch_error.hunk_index,

@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 <img src="docs/rise_banner.jpg" alt="RISE — Resilient Incident & Remediation System Engine" width="100%"/>
 
@@ -185,6 +185,21 @@ flowchart TD
     N -->|"Failed / Unconfirmed"| P["Auto-Rollback → Re-escalate to Human"]
 ```
 
+### Problem Statement (PS) Named Agent Role Mapping
+
+To align RISE's multi-agent orchestration graph with standard security operations and Problem Statement terminology, the table below documents the exact functional mapping:
+
+| Problem Statement Named Role | RISE Implementation Architecture | Responsibilities & Capabilities |
+|---|---|---|
+| **Log Analysis Agent** | **Context Builder Agent + Ingestion Pipeline**<br/>`apps/api/src/services/ingestion/`<br/>`apps/agents/src/nodes/context_builder.py` | Ingests, normalizes, and correlates security log events (Syslog, CSV, JSON, NDJSON) from webhooks and batch endpoints (`POST /ingest/security-log`) with live Prometheus metrics, Loki log streams, and Qdrant vector memory. |
+| **Threat Investigation Agent** | **Investigation Agent + Root Cause Agent**<br/>`apps/agents/src/nodes/investigation.py`<br/>`apps/agents/src/nodes/root_cause.py` | Generates ranked diagnostic hypotheses, determines root cause with calibrated confidence scoring, cites verifiable evidence tokens, matches vector similarities with past post-mortems, and identifies exact code regressions. |
+| **Blast Radius & Impact Engine** | **Impact Analyzer**<br/>`apps/agents/src/nodes/impact_analyzer.py` | Traverses deterministic service dependency topology graphs to calculate blast radius, affected downstream services, and customer impact. |
+| **Policy & Governance Engine** | **Decision & Plan Agent + OPA**<br/>`apps/agents/src/nodes/decision_plan.py`<br/>`packages/rise-core/opa/` | Evaluates declarative Rego policies (`risk_tiers.rego`) against blast radius and action risks to enforce structural default-deny and human approval gates. |
+| **Execution Gateway** | **Execution Agent + MCP Protocol**<br/>`apps/agents/src/nodes/execution.py`<br/>`packages/rise-core/mcp/` | Validates patch integrity against verbatim file bytes, checks SHA-256 plan hashes, and executes allow-listed tools (GitHub PR creation, Kubernetes rollout). |
+| **Self-Healing & Verification Agent** | **Verification Agent**<br/>`apps/agents/src/nodes/verification.py` | Independently re-queries live APIs, metrics, and health probes post-remediation; initiates automated rollback if SLOs are not restored. |
+
+> **Note on Demo Mode & UI Labeling:** The RISE Dashboard displays these PS named agent role tags (`Log Analysis Agent`, `Threat Investigation Agent`) throughout the incident detail timeline, multi-agent flow visualizer, and RCA cards without altering underlying backend schemas or execution node names.
+
 ---
 
 ## Data & Evidence Flow
@@ -267,6 +282,7 @@ flowchart TB
     end
 
     subgraph EXT["External Providers"]
+        GRQ[Groq]
         GEM[Gemini]
         OAI[OpenAI]
         BR[AWS Bedrock]
@@ -278,7 +294,7 @@ flowchart TB
     API --> DASH
     WORK --> MCPK & MCPA & MCPG
     WORK --> PG & RD & QD & S3
-    WORK --> GEM & OAI & BR
+    WORK --> GRQ & GEM & OAI & BR
     MCPG --> GH
     WORK --> SLK
     NS_OBS -.monitors.-> K8S

@@ -206,6 +206,9 @@ def _validate_github_configuration() -> None:
 _assert_safe_test_mode()
 _validate_github_configuration()
 
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -215,6 +218,28 @@ from apps.api.src.middleware.envelope import (
     validation_exception_handler,
 )
 from apps.api.src.routers import ALL_ROUTERS
+from apps.api.src.services.github_monitor import run_github_monitor
+
+import logging
+_lifespan_logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """FastAPI lifespan — start GitHub monitor on boot, cancel on shutdown."""
+    interval = int(os.getenv("GITHUB_MONITOR_INTERVAL_SECONDS", "60"))
+    monitor_task = asyncio.create_task(run_github_monitor(interval_seconds=interval))
+    _lifespan_logger.info("[Lifespan] GitHub monitor started (interval=%ds)", interval)
+    try:
+        yield
+    finally:
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
+        _lifespan_logger.info("[Lifespan] GitHub monitor stopped.")
+
 
 app = FastAPI(
     title="RISE API",
@@ -223,6 +248,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    lifespan=_lifespan,
 )
 
 from fastapi.middleware.cors import CORSMiddleware

@@ -32,7 +32,7 @@ import time
 from typing import Protocol, runtime_checkable
 
 import httpx
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.x509 import load_pem_x509_certificate
 from fastapi import HTTPException, Request, status

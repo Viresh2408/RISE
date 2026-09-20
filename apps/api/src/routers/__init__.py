@@ -9,9 +9,11 @@ from .knowledge import router as knowledge_router
 from .policies import router as policies_router
 from .integrations import router as integrations_router
 from .reports import router as reports_router
+from .ingest import router as ingest_router
 from .webhooks import router as webhooks_router
 from .audit import router as audit_router
 from .health import router as health_router
+from .github_preview import router as github_preview_router
 
 ALL_ROUTERS = [
     auth_router,
@@ -24,7 +26,9 @@ ALL_ROUTERS = [
     policies_router,
     integrations_router,
     reports_router,
+    ingest_router,
     webhooks_router,
     audit_router,
     health_router,
+    github_preview_router,
 ]

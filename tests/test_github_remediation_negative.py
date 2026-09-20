@@ -13,10 +13,9 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 # pyrefly: ignore [missing-import]
-from schemas.agent_state import ActionPlan, ActionStep, ExecutionLog
+from schemas.agent_state import ActionPlan, ActionStep
 from apps.agents.src.nodes.execution import run_execution_agent
 from apps.agents.src.nodes.verification import evaluate_rule_based_verification
-from apps.api.src.services.github_service import commit_remediation_to_github
 # pyrefly: ignore [missing-import]
 from mcp_client.hash import compute_action_plan_hash
 
@@ -86,7 +85,7 @@ def test_execution_fails_when_github_tool_missing_pr_details():
     asyncio.run(_run())
 
 
-from apps.agents.src.nodes.verification import evaluate_rule_based_verification, run_verification_agent, verify_github_pr_live
+from apps.agents.src.nodes.verification import run_verification_agent
 
 
 def test_verification_agent_checks_github_pr_existence():

@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional, Tuple
 from llm_gateway.gateway import LLMGateway, call_structured
 from schemas.agent_state import InvestigationResult, Hypothesis
 
+from apps.agents.src.nodes.errors import AgentLLMError
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -160,8 +162,16 @@ async def run_investigation_agent(
     gateway: Optional[LLMGateway] = None,
     db: Any = None,
     runbook_fetcher: Optional[Any] = None,
+    raise_on_llm_failure: bool = False,
 ) -> Dict[str, Any]:
-    """Execute the Investigation Agent node logic."""
+    """Execute the Investigation Agent node logic.
+
+    ``raise_on_llm_failure`` (default False) preserves production graceful
+    degradation via a single inferred fallback hypothesis. Eval/benchmark
+    callers pass True so an LLM/infra failure raises ``AgentLLMError`` instead
+    of being masked as a (fabricated) hypothesis the downstream judge would
+    mis-score.
+    """
     tenant_id = state.get("tenant_id") or "default_tenant"
     context = state.get("context") or {}
     event = state.get("event_payload") or state.get("incident_event") or {}
@@ -188,6 +198,11 @@ async def run_investigation_agent(
         else:
             result_obj = await call_structured(full_prompt, InvestigationResult, db=db)
     except Exception as exc:
+        if raise_on_llm_failure:
+            # Fail loud: an infra failure must not surface as a fabricated
+            # hypothesis that the RCA benchmark would score as a real answer.
+            logger.error("Investigation Agent LLM call failed (fail-loud mode): %s", exc)
+            raise AgentLLMError(f"Investigation Agent LLM call failed: {exc}") from exc
         logger.warning("LLM Gateway call failed or unconfigured in Investigation Agent: %s", exc)
         # Fallback InvestigationResult when LLM gateway is unconfigured in test/offline environment
         result_obj = InvestigationResult(

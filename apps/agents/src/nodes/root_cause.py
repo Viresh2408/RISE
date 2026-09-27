@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional
 from llm_gateway.gateway import LLMGateway, call_structured
 from schemas.agent_state import RootCause
 
+from apps.agents.src.nodes.errors import AgentLLMError
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -92,8 +94,16 @@ async def run_root_cause_agent(
     *,
     gateway: Optional[LLMGateway] = None,
     db: Any = None,
+    raise_on_llm_failure: bool = False,
 ) -> Dict[str, Any]:
-    """Execute the Root Cause Agent node logic."""
+    """Execute the Root Cause Agent node logic.
+
+    ``raise_on_llm_failure`` (default False) preserves production graceful
+    degradation: on an LLM/infra failure the node returns a low-confidence
+    fallback RootCause. Eval/benchmark callers pass True so an infra failure
+    is raised (``AgentLLMError``) rather than masked as a diagnostic answer —
+    the RCA judge then records it as ``errored``, never as a diagnostic FAIL.
+    """
     hypotheses = state.get("hypotheses") or []
     context = state.get("context") or {}
 
@@ -110,6 +120,11 @@ async def run_root_cause_agent(
         else:
             result_obj = await call_structured(full_prompt, RootCause, db=db)
     except Exception as exc:
+        if raise_on_llm_failure:
+            # Fail loud: do NOT mask an infra failure as a low-confidence
+            # diagnostic answer (that corrupts the benchmark accuracy metric).
+            logger.error("Root Cause Agent LLM call failed (fail-loud mode): %s", exc)
+            raise AgentLLMError(f"Root Cause Agent LLM call failed: {exc}") from exc
         logger.warning("LLM Gateway call failed or unconfigured in Root Cause Agent: %s", exc)
         # Fallback RootCause when LLM gateway is unconfigured in test/offline environment
         result_obj = RootCause(

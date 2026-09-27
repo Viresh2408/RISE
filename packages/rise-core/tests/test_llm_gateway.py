@@ -349,3 +349,54 @@ async def test_usage_logged_on_success():
     )
     assert row.is_repair_attempt is False
     mock_db.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test 9: Optional on_usage observer fires with the record_usage kwargs
+#         (lets the RCA benchmark capture tokens/cost/prompt without a DB)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_on_usage_observer_receives_success_kwargs():
+    gemini_adapter = AsyncMock()
+    gemini_adapter.complete = AsyncMock(
+        return_value=RawLLMResponse(content=_VALID_JSON, input_tokens=100, output_tokens=50)
+    )
+    config = _make_config(providers=["gemini"], cost_in=0.000_001, cost_out=0.000_002)
+
+    events: list[dict] = []
+    gw = LLMGateway(config=config, _adapters=[gemini_adapter], on_usage=events.append)
+
+    # No db passed: the observer must still fire (it is independent of DB logging).
+    result = await gw.call_structured(_PROMPT, _DiagnosisSchema)
+    assert isinstance(result, _DiagnosisSchema)
+
+    assert len(events) == 1, f"Expected 1 usage event; got {len(events)}"
+    ev = events[0]
+    assert ev["provider"] == "gemini"
+    assert ev["input_tokens"] == 100
+    assert ev["output_tokens"] == 50
+    assert ev["success"] is True
+    assert ev["prompt"] == _PROMPT
+    assert ev["cost_per_input_token"] == pytest.approx(0.000_001)
+    assert ev["cost_per_output_token"] == pytest.approx(0.000_002)
+
+
+# ---------------------------------------------------------------------------
+# Test 10: An exception from the observer must never break the call path
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_on_usage_observer_exception_is_swallowed():
+    gemini_adapter = AsyncMock()
+    gemini_adapter.complete = AsyncMock(return_value=_raw(_VALID_JSON))
+    config = _make_config(providers=["gemini"])
+
+    def _boom(_ev: dict) -> None:
+        raise RuntimeError("observer blew up")
+
+    gw = LLMGateway(config=config, _adapters=[gemini_adapter], on_usage=_boom)
+
+    # The call must still succeed despite the observer raising.
+    result = await gw.call_structured(_PROMPT, _DiagnosisSchema)
+    assert isinstance(result, _DiagnosisSchema)

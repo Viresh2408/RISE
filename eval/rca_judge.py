@@ -70,13 +70,17 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
+import re
 import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Path setup (allow running from repo root, same as run_eval.py)
@@ -742,6 +746,21 @@ class RubricScore:
     mechanism_match: bool
     confidence_reported: float
     latency_ms: int
+    # -- Evidence grounding (deterministic): how well the RootCause's cited
+    #    excerpts are actually present in the scenario raw_evidence (0.0-1.0).
+    evidence_grounding_score: float = 0.0
+    grounding_detail: str = ""
+    # -- Execution metadata (populated from the gateway usage observer) --------
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    llm_calls: int = 0
+    prompt_hashes: List[str] = field(default_factory=list)
+    # -- Secondary LLM judge (non-gating; None when disabled or errored) -------
+    llm_judge_verdict: Optional[str] = None
+    llm_judge_confidence: Optional[float] = None
+    llm_judge_citations: List[str] = field(default_factory=list)
+    llm_judge_citations_grounded: Optional[bool] = None
     error: Optional[str] = None
 
 
@@ -757,12 +776,24 @@ class BenchmarkReport:
     git_sha: Optional[str]
     dataset_hash: str
     timestamp_utc: str
+    temperature: Optional[float] = None
+    llm_judge_enabled: bool = False
     scores: List[RubricScore] = field(default_factory=list)
     total: int = 0
     passed: int = 0
     failed: int = 0
     errored: int = 0
     mechanism_accuracy_pct: float = 0.0
+    # 95% Wilson score interval on strict mechanism accuracy (percentage points).
+    mechanism_accuracy_ci_low: float = 0.0
+    mechanism_accuracy_ci_high: float = 0.0
+    # Hallucination rate over scored (non-errored) cases.
+    hallucination_rate_pct: float = 0.0
+    # Mean evidence-grounding score over scored (non-errored) cases (0.0-1.0).
+    mean_evidence_grounding: float = 0.0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cost_usd: float = 0.0
     release_eligible: bool = False
     summary: str = ""
 
@@ -818,6 +849,156 @@ def _score_mechanism(
 
 
 # ---------------------------------------------------------------------------
+# Evidence grounding scorer (deterministic — no LLM involvement)
+# ---------------------------------------------------------------------------
+
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._-]{2,}")
+
+
+def _tokenize(text: str) -> set[str]:
+    """Lowercase word/identifier tokens of length >= 3 (numbers, ids, words)."""
+    return set(_TOKEN_RE.findall(text.lower()))
+
+
+def _flatten_raw_evidence(raw_evidence: Dict[str, Any]) -> str:
+    """Flatten the scenario raw_evidence into one lowercased text blob.
+
+    Used as the corpus a cited excerpt must be grounded against.  The answer_key
+    is NEVER passed here — only raw_evidence — so grounding cannot leak ground
+    truth into the score.
+    """
+    return json.dumps(raw_evidence, ensure_ascii=False).lower()
+
+
+def _score_grounding(
+    evidence: List[Dict[str, Any]],
+    raw_evidence: Dict[str, Any],
+) -> Tuple[float, str]:
+    """Score how well cited evidence excerpts are grounded in raw_evidence.
+
+    For each cited ``EvidenceItem`` we compute the fraction of its excerpt/
+    reference tokens that actually appear in the raw_evidence corpus.  The
+    grounding score is the mean of those per-item fractions (0.0-1.0).  An item
+    is counted as *weakly grounded* when its fraction < 0.5 (likely fabricated
+    or heavily paraphrased text not present in the evidence).
+
+    Returns (score, detail).  A RootCause that cites no evidence scores 0.0 —
+    an ungrounded conclusion cannot demonstrate grounding.
+    """
+    if not evidence:
+        return 0.0, "no evidence cited"
+
+    corpus_tokens = _tokenize(_flatten_raw_evidence(raw_evidence))
+    per_item: List[float] = []
+    weak: List[str] = []
+    for item in evidence:
+        cited = f"{item.get('excerpt', '')} {item.get('reference', '')}"
+        cited_tokens = _tokenize(cited)
+        if not cited_tokens:
+            per_item.append(0.0)
+            weak.append("(empty excerpt)")
+            continue
+        overlap = len(cited_tokens & corpus_tokens) / len(cited_tokens)
+        per_item.append(overlap)
+        if overlap < 0.5:
+            snippet = str(item.get("excerpt", ""))[:40]
+            weak.append(f"'{snippet}' ({overlap:.0%})")
+
+    score = sum(per_item) / len(per_item)
+    detail = (
+        f"{len(evidence)} cited, {len(weak)} weakly grounded"
+        + (f": {'; '.join(weak)}" if weak else "")
+    )
+    return score, detail
+
+
+def _wilson_ci(k: int, n: int, z: float = 1.96) -> Tuple[float, float]:
+    """95% Wilson score interval for a binomial proportion, as percentages.
+
+    Preferred over the normal approximation for small n (the pilot n=10) and for
+    proportions near 0 or 1, where the naive interval can fall outside [0, 1].
+    Returns (low_pct, high_pct).  n == 0 yields (0.0, 0.0).
+    """
+    if n <= 0:
+        return 0.0, 0.0
+    p = k / n
+    denom = 1.0 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    margin = (z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / denom
+    low = max(0.0, center - margin)
+    high = min(1.0, center + margin)
+    return low * 100.0, high * 100.0
+
+
+# ---------------------------------------------------------------------------
+# Secondary LLM judge (non-gating; structured citations, no ungrounded reasoning)
+# ---------------------------------------------------------------------------
+
+
+class LLMJudgeVerdict(BaseModel):
+    """Structured verdict returned by the secondary LLM judge.
+
+    Per docs/evaluation-methodology.md §2 the LLM judge is *secondary*: it never
+    changes the deterministic pass/fail.  It must cite verbatim excerpts from the
+    provided raw_evidence rather than reason from outside knowledge; we verify
+    those citations are actually present in raw_evidence and record whether they
+    were grounded.
+    """
+
+    verdict: str  # one of: correct | partially_correct | incorrect
+    confidence: float
+    citations: List[str]
+    reasoning: str
+
+
+_LLM_JUDGE_PROMPT = """\
+You are an impartial root-cause-analysis judge. You are given an incident's raw
+evidence, a candidate root-cause summary produced by an agent, and the verified
+ground-truth root cause. Decide whether the candidate correctly identifies the
+same underlying mechanism as the ground truth.
+
+RULES:
+- Base your verdict ONLY on the raw evidence and the ground truth provided below.
+- Every citation you give MUST be copied verbatim from the RAW EVIDENCE (not the
+  ground truth, not outside knowledge). Do not invent citations.
+- Return ONLY JSON matching the schema. No prose outside the JSON.
+
+verdict must be exactly one of: "correct", "partially_correct", "incorrect".
+
+--- RAW EVIDENCE ---
+{raw_evidence}
+
+--- CANDIDATE ROOT CAUSE ---
+{candidate}
+
+--- GROUND TRUTH ROOT CAUSE ---
+{ground_truth}
+"""
+
+
+async def _run_llm_judge(
+    gateway: Any,
+    scenario: Dict[str, Any],
+    cause_summary: str,
+) -> Optional[LLMJudgeVerdict]:
+    """Run the secondary LLM judge. Returns None on any failure (non-gating).
+
+    Never raises: the LLM judge is advisory only, so an outage here must not fail
+    the benchmark run (the deterministic rubric already governs pass/fail).
+    """
+    prompt = _LLM_JUDGE_PROMPT.format(
+        raw_evidence=json.dumps(scenario["raw_evidence"], indent=2, ensure_ascii=False),
+        candidate=cause_summary,
+        ground_truth=scenario["answer_key"]["ground_truth_root_cause"],
+    )
+    try:
+        return await gateway.call_structured(prompt, LLMJudgeVerdict)
+    except Exception as exc:  # noqa: BLE001 — advisory judge must never fail the run
+        logger.warning("Secondary LLM judge failed (non-gating): %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Live agent runner
 # ---------------------------------------------------------------------------
 
@@ -864,8 +1045,13 @@ async def _run_agents_on_scenario(
         state,
         gateway=gateway,
         runbook_fetcher=_null_runbook_fetcher,
+        raise_on_llm_failure=True,
     )
-    state = await run_root_cause_agent(state, gateway=gateway)
+    state = await run_root_cause_agent(
+        state,
+        gateway=gateway,
+        raise_on_llm_failure=True,
+    )
     return state
 
 
@@ -906,8 +1092,42 @@ def _build_live_gateway(provider: str, model: str) -> Any:
             f"Set {env_var} in your .env or environment."
         )
 
-    pcfg = ProviderConfig(name=p, model=model, api_key=api_key)
-    return LLMGateway(config=GatewayConfig(providers=[pcfg]))
+    # temperature=0.0 for maximally deterministic scoring where the provider
+    # supports it (docs/evaluation-methodology.md §2).
+    pcfg = ProviderConfig(name=p, model=model, api_key=api_key, temperature=0.0)
+
+    # Per-call usage observer: capture tokens/cost/prompt-hash without a DB.
+    # record_usage's raw kwargs carry per-token pricing but not the computed
+    # cost, so we derive cost here and hash the prompt (never storing it raw).
+    usage_events: List[Dict[str, Any]] = []
+
+    def _collect(ev: Dict[str, Any]) -> None:
+        prompt = str(ev.get("prompt", "") or "")
+        it = int(ev.get("input_tokens", 0) or 0)
+        ot = int(ev.get("output_tokens", 0) or 0)
+        cost = it * float(ev.get("cost_per_input_token", 0.0) or 0.0) + ot * float(
+            ev.get("cost_per_output_token", 0.0) or 0.0
+        )
+        usage_events.append(
+            {
+                "provider": ev.get("provider"),
+                "model": ev.get("model"),
+                "input_tokens": it,
+                "output_tokens": ot,
+                "cost_usd": cost,
+                "prompt_hash": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
+                "success": bool(ev.get("success", False)),
+                "is_repair_attempt": bool(ev.get("is_repair_attempt", False)),
+                "latency_ms": int(ev.get("latency_ms", 0) or 0),
+            }
+        )
+
+    gateway = LLMGateway(config=GatewayConfig(providers=[pcfg]), on_usage=_collect)
+    # Expose the collected per-call usage so the harness can attribute
+    # tokens/cost/prompt-hash to each scenario (LLMGateway allows arbitrary
+    # instance attributes; a monkeypatched test double simply won't have this).
+    gateway.usage_events = usage_events  # type: ignore[attr-defined]
+    return gateway
 
 
 # ---------------------------------------------------------------------------
@@ -949,40 +1169,65 @@ def _write_markdown_report(report: "BenchmarkReport", path: str) -> None:
         f"| Timestamp (UTC) | {report.timestamp_utc} |",
         f"| Provider | {report.provider} |",
         f"| Model | {report.model} |",
+        f"| Temperature | {report.temperature} |",
+        f"| LLM judge | {'enabled (secondary, non-gating)' if report.llm_judge_enabled else 'disabled'} |",
         f"| Git SHA | `{report.git_sha}` |",
         f"| Dataset hash | `{report.dataset_hash}` |",
         f"| Live | {'Yes' if report.live else 'No (skipped)'} |",
+        f"| Tokens (in/out) | {report.total_input_tokens} / {report.total_output_tokens} |",
+        f"| Est. cost (USD) | ${report.total_cost_usd:.6f} |",
         f"| Release eligible | {'Yes' if report.release_eligible else '**No** -- pilot only'} |",
         "",
         "## Results",
         "",
-        f"**Mechanism accuracy: {report.mechanism_accuracy_pct:.1f}%** ({report.passed}/{report.total} passed)",
+        f"**Strict mechanism accuracy: {report.mechanism_accuracy_pct:.1f}%** "
+        f"({report.passed}/{report.total} passed)  ",
+        f"95% CI (Wilson): {report.mechanism_accuracy_ci_low:.1f}% -- {report.mechanism_accuracy_ci_high:.1f}%  ",
+        f"Hallucination rate: {report.hallucination_rate_pct:.1f}%  ",
+        f"Mean evidence grounding: {report.mean_evidence_grounding:.2f}",
         "",
-        "| ID | Title | Cause Summary | Components | Mechanisms | Hallucination | Result |",
-        "|:--|:--|:--|:--|:--|:--|:--|",
+        "| ID | Title | Cause Summary | Components | Mechanisms | Halluc. | Ground | Judge | Result |",
+        "|:--|:--|:--|:--|:--|:--|:--|:--|:--|",
     ]
     for s in report.scores:
         result_str = "PASS" if s.mechanism_match else ("ERROR" if s.error else "FAIL")
         halluc = f"YES: {s.hallucination_detail}" if s.hallucination_detected else "None"
         summary_trunc = (s.cause_summary[:55] + "...") if len(s.cause_summary) > 55 else s.cause_summary
+        judge_str = s.llm_judge_verdict or "-"
+        if s.llm_judge_verdict and s.llm_judge_citations_grounded is False:
+            judge_str += " (ungrounded cites)"
         lines.append(
             f"| {s.scenario_id} | {s.title[:38]}... | {summary_trunc} | "
             f"{', '.join(s.components_matched) or 'NONE'} | "
             f"{', '.join(s.mechanisms_matched) or 'NONE'} | "
-            f"{halluc} | {result_str} |"
+            f"{halluc} | {s.evidence_grounding_score:.2f} | {judge_str} | {result_str} |"
         )
 
     lines += [
         "",
         "## Scoring Methodology",
         "",
-        "Scoring uses a **deterministic mechanism rubric** per scenario.",
-        "**Keyword/substring overlap alone is NOT sufficient** for a PASS.",
+        "Scoring uses a **deterministic mechanism rubric** per scenario as the",
+        "primary metric. **Keyword/substring overlap alone is NOT sufficient** for a PASS.",
         "A case PASSES only when ALL of the following hold:",
         "",
         "1. At least one `primary_component` appears in `cause_summary` or `confidence_rationale`.",
         "2. At least one `causal_mechanism` appears in `cause_summary` or `confidence_rationale`.",
         "3. No `hallucination_check` term dominates the first 120 chars of `cause_summary`.",
+        "",
+        "Distinct secondary metrics reported (docs/evaluation-methodology.md §2):",
+        "",
+        "- **Evidence grounding score** — deterministic: mean fraction of each cited",
+        "  `EvidenceItem` excerpt's tokens that actually appear in `raw_evidence`.",
+        "  An uncited or fabricated excerpt lowers this score; the answer key is never",
+        "  part of the grounding corpus.",
+        "- **Hallucination rate** — fraction of scored cases whose lead sentence names a",
+        "  known-wrong component.",
+        "- **95% confidence interval** — Wilson score interval on strict mechanism accuracy",
+        "  (appropriate for small n and extreme proportions).",
+        "- **Secondary LLM judge** — advisory only, NON-GATING. Returns a structured",
+        "  verdict with citations that must be copied verbatim from `raw_evidence`; we",
+        "  record whether those citations were grounded. It never changes PASS/FAIL.",
         "",
         "## Release Gate Status",
         "",
@@ -1011,6 +1256,7 @@ async def run_benchmark(
     provider: Optional[str],
     model: Optional[str],
     artifacts_dir: str,
+    llm_judge: bool = False,
 ) -> bool:
     """Run the Live RCA Benchmark Pilot (n=10).
 
@@ -1071,6 +1317,7 @@ async def run_benchmark(
         raise RuntimeError("--live requires --provider <provider> and --model <model>.")
 
     gateway = _build_live_gateway(provider, model)
+    usage_events: List[Dict[str, Any]] = getattr(gateway, "usage_events", [])
 
     report = BenchmarkReport(
         run_id=run_id,
@@ -1083,11 +1330,14 @@ async def run_benchmark(
         git_sha=_git_sha(),
         dataset_hash=_dataset_hash(GOLDEN_SCENARIOS),
         timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        temperature=0.0,
+        llm_judge_enabled=llm_judge,
     )
 
     for scenario in GOLDEN_SCENARIOS[:BENCHMARK_N]:
         print(f"\n  [{scenario['id']:02d}/{BENCHMARK_N}] {scenario['title']}")
         t0 = time.monotonic()
+        usage_start = len(usage_events)
 
         try:
             state = await _run_agents_on_scenario(scenario, gateway)
@@ -1110,6 +1360,33 @@ async def run_benchmark(
                 hallucination_detail,
             ) = _score_mechanism(cause_summary, confidence_rationale, rubric)
 
+            grounding_score, grounding_detail = _score_grounding(
+                rca.get("evidence", []) or [], scenario["raw_evidence"]
+            )
+
+            # Attribute the LLM calls made during this scenario.
+            scenario_usage = usage_events[usage_start:]
+            in_tok = sum(u["input_tokens"] for u in scenario_usage)
+            out_tok = sum(u["output_tokens"] for u in scenario_usage)
+            cost = sum(u["cost_usd"] for u in scenario_usage)
+            prompt_hashes = [u["prompt_hash"] for u in scenario_usage]
+
+            # Secondary LLM judge (advisory / non-gating).
+            judge_verdict: Optional[str] = None
+            judge_conf: Optional[float] = None
+            judge_citations: List[str] = []
+            judge_grounded: Optional[bool] = None
+            if llm_judge:
+                verdict = await _run_llm_judge(gateway, scenario, cause_summary)
+                if verdict is not None:
+                    judge_verdict = verdict.verdict
+                    judge_conf = verdict.confidence
+                    judge_citations = list(verdict.citations)
+                    corpus = _flatten_raw_evidence(scenario["raw_evidence"])
+                    judge_grounded = all(
+                        c and c.lower() in corpus for c in judge_citations
+                    ) if judge_citations else False
+
             score = RubricScore(
                 scenario_id=scenario["id"],
                 title=scenario["title"],
@@ -1123,6 +1400,17 @@ async def run_benchmark(
                 mechanism_match=mechanism_match,
                 confidence_reported=confidence,
                 latency_ms=latency_ms,
+                evidence_grounding_score=grounding_score,
+                grounding_detail=grounding_detail,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                cost_usd=cost,
+                llm_calls=len(scenario_usage),
+                prompt_hashes=prompt_hashes,
+                llm_judge_verdict=judge_verdict,
+                llm_judge_confidence=judge_conf,
+                llm_judge_citations=judge_citations,
+                llm_judge_citations_grounded=judge_grounded,
             )
             report.scores.append(score)
 
@@ -1133,11 +1421,17 @@ async def run_benchmark(
             print(f"       Mechanisms hit: {mechanisms_matched}")
             if hallucination_detected:
                 print(f"       Hallucination : {hallucination_detail}")
+            print(f"       Grounding     : {grounding_score:.2f}  ({grounding_detail})")
             print(f"       Confidence    : {confidence:.2f}  |  Latency: {latency_ms}ms")
+            if in_tok or out_tok:
+                print(f"       Tokens        : in={in_tok} out={out_tok}  |  Cost: ${cost:.6f}")
+            if llm_judge and judge_verdict is not None:
+                print(f"       LLM judge     : {judge_verdict} (conf {judge_conf}, grounded={judge_grounded})")
             print(f"       Result        : {result_str}")
 
         except Exception as exc:
             latency_ms = int((time.monotonic() - t0) * 1000)
+            scenario_usage = usage_events[usage_start:]
             score = RubricScore(
                 scenario_id=scenario["id"],
                 title=scenario["title"],
@@ -1151,6 +1445,13 @@ async def run_benchmark(
                 mechanism_match=False,
                 confidence_reported=0.0,
                 latency_ms=latency_ms,
+                evidence_grounding_score=0.0,
+                grounding_detail="errored — no diagnosis produced",
+                input_tokens=sum(u["input_tokens"] for u in scenario_usage),
+                output_tokens=sum(u["output_tokens"] for u in scenario_usage),
+                cost_usd=sum(u["cost_usd"] for u in scenario_usage),
+                llm_calls=len(scenario_usage),
+                prompt_hashes=[u["prompt_hash"] for u in scenario_usage],
                 error=str(exc),
             )
             report.scores.append(score)
@@ -1165,11 +1466,34 @@ async def run_benchmark(
     report.mechanism_accuracy_pct = (
         (report.passed / report.total * 100) if report.total > 0 else 0.0
     )
+
+    # Distinct release-gate metrics (docs/evaluation-methodology.md §2):
+    # strict mechanism match + 95% CI, evidence grounding, hallucination rate.
+    scored = [s for s in report.scores if not s.error]
+    n_scored = len(scored)
+    low, high = _wilson_ci(report.passed, report.total)
+    report.mechanism_accuracy_ci_low = low
+    report.mechanism_accuracy_ci_high = high
+    report.hallucination_rate_pct = (
+        sum(1 for s in scored if s.hallucination_detected) / n_scored * 100
+        if n_scored > 0
+        else 0.0
+    )
+    report.mean_evidence_grounding = (
+        sum(s.evidence_grounding_score for s in scored) / n_scored
+        if n_scored > 0
+        else 0.0
+    )
+    report.total_input_tokens = sum(s.input_tokens for s in report.scores)
+    report.total_output_tokens = sum(s.output_tokens for s in report.scores)
+    report.total_cost_usd = sum(s.cost_usd for s in report.scores)
+
     report.release_eligible = False  # Always False: n=10 < 50
     report.summary = (
         f"Live RCA benchmark (pilot, n={report.total}): "
-        f"{report.mechanism_accuracy_pct:.1f}% -- {BENCHMARK_LABEL}, "
-        f"target n>={report.release_gate_n}"
+        f"{report.mechanism_accuracy_pct:.1f}% "
+        f"(95% CI {report.mechanism_accuracy_ci_low:.1f}-{report.mechanism_accuracy_ci_high:.1f}%) "
+        f"-- {BENCHMARK_LABEL}, target n>={report.release_gate_n}"
     )
 
     # -- Write JSON report ---------------------------------------------------
@@ -1182,6 +1506,8 @@ async def run_benchmark(
         "live": report.live,
         "provider": report.provider,
         "model": report.model,
+        "temperature": report.temperature,
+        "llm_judge_enabled": report.llm_judge_enabled,
         "git_sha": report.git_sha,
         "dataset_hash": report.dataset_hash,
         "timestamp_utc": report.timestamp_utc,
@@ -1190,6 +1516,13 @@ async def run_benchmark(
         "failed": report.failed,
         "errored": report.errored,
         "mechanism_accuracy_pct": round(report.mechanism_accuracy_pct, 2),
+        "mechanism_accuracy_ci_low": round(report.mechanism_accuracy_ci_low, 2),
+        "mechanism_accuracy_ci_high": round(report.mechanism_accuracy_ci_high, 2),
+        "hallucination_rate_pct": round(report.hallucination_rate_pct, 2),
+        "mean_evidence_grounding": round(report.mean_evidence_grounding, 4),
+        "total_input_tokens": report.total_input_tokens,
+        "total_output_tokens": report.total_output_tokens,
+        "total_cost_usd": round(report.total_cost_usd, 6),
         "summary": report.summary,
         "scores": [asdict(s) for s in report.scores],
     }
@@ -1204,6 +1537,10 @@ async def run_benchmark(
     print(f"  Passed  : {report.passed}/{report.total}")
     print(f"  Failed  : {report.failed}/{report.total}")
     print(f"  Errored : {report.errored}/{report.total}")
+    print(f"  Hallucination rate : {report.hallucination_rate_pct:.1f}%")
+    print(f"  Mean grounding     : {report.mean_evidence_grounding:.2f}")
+    print(f"  Tokens (in/out)    : {report.total_input_tokens}/{report.total_output_tokens}")
+    print(f"  Est. cost (USD)    : ${report.total_cost_usd:.6f}")
     print(f"  JSON    : {report_json_path}")
     print(f"  Markdown: {report_md_path}")
     print(f"{sep}\n")
@@ -1259,6 +1596,11 @@ if __name__ == "__main__":
     _p.add_argument("--provider", default=None, help="LLM provider (gemini|openai|anthropic|groq)")
     _p.add_argument("--model", default=None, help="Model name")
     _p.add_argument("--live", action="store_true", help="Run live evaluation with real LLM calls")
+    _p.add_argument(
+        "--llm-judge",
+        action="store_true",
+        help="Also run the secondary LLM judge (advisory, non-gating)",
+    )
     _args = _p.parse_args()
 
     _run_id = str(uuid.uuid4())[:8]
@@ -1272,6 +1614,7 @@ if __name__ == "__main__":
             provider=_args.provider,
             model=_args.model,
             artifacts_dir=_artifacts_dir,
+            llm_judge=_args.llm_judge,
         )
     )
     sys.exit(0 if _ok else 1)

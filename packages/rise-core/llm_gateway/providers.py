@@ -67,10 +67,13 @@ class GeminiAdapter:
         )
 
     async def complete(self, prompt: str) -> RawLLMResponse:
+        generation_config: dict[str, Any] = {"responseMimeType": "application/json"}
+        if self._cfg.temperature is not None:
+            generation_config["temperature"] = self._cfg.temperature
         body: dict[str, Any] = {
             "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM_INSTRUCTION}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json"},
+            "generationConfig": generation_config,
         }
         try:
             async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
@@ -132,6 +135,8 @@ class OpenAIAdapter:
             ],
             "response_format": {"type": "json_object"},
         }
+        if self._cfg.temperature is not None:
+            body["temperature"] = self._cfg.temperature
         headers = {
             "Authorization": f"Bearer {self._cfg.api_key}",
             "Content-Type": "application/json",
@@ -198,6 +203,8 @@ class OllamaAdapter:
                 {"role": "user", "content": prompt},
             ],
         }
+        if self._cfg.temperature is not None:
+            body["options"] = {"temperature": self._cfg.temperature}
         try:
             async with httpx.AsyncClient(timeout=self._cfg.timeout_seconds) as client:
                 resp = await client.post(f"{self._base}/api/chat", json=body)
@@ -257,6 +264,8 @@ class GroqAdapter:
             ],
             "response_format": {"type": "json_object"},
         }
+        if self._cfg.temperature is not None:
+            body["temperature"] = self._cfg.temperature
         headers = {
             "Authorization": f"Bearer {self._cfg.api_key}",
             "Content-Type": "application/json",

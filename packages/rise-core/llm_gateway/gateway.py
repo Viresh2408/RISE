@@ -53,6 +53,8 @@ from llm_gateway.providers import ProviderAdapter, make_adapter
 from llm_gateway.usage import record_usage
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session
 
 T = TypeVar("T", bound=BaseModel)
@@ -88,8 +90,15 @@ class LLMGateway:
         *,
         # Inject adapters for testing without touching the HTTP layer.
         _adapters: list[ProviderAdapter] | None = None,
+        # Optional per-call usage observer. Invoked with the same kwargs passed
+        # to record_usage (provider, model, prompt, input_tokens, output_tokens,
+        # cost_per_*_token, latency_ms, success, ...). Lets a caller (e.g. the
+        # RCA benchmark) capture tokens/cost/prompt-hash without a DB session.
+        # Never affects the call path — exceptions from it are swallowed.
+        on_usage: "Callable[[dict], None] | None" = None,
     ) -> None:
         self._config = config
+        self._on_usage = on_usage
         if _adapters is not None:
             self._adapters: list[tuple[ProviderConfig, ProviderAdapter]] = list(
                 zip(config.providers, _adapters)
@@ -121,6 +130,21 @@ class LLMGateway:
         schema_json = json.dumps(output_schema.model_json_schema(), indent=2)
         attempted_providers: list[str] = []
 
+        def _record(**kw: object) -> None:
+            """Persist a usage row (no-op when *db* is None) then notify the
+            optional ``on_usage`` observer with the same kwargs.
+
+            The observer must never affect the call path — the RCA benchmark
+            uses it purely to collect tokens/cost/prompt-hash — so any exception
+            it raises is swallowed.
+            """
+            record_usage(db, **kw)
+            if self._on_usage is not None:
+                try:
+                    self._on_usage(dict(kw))
+                except Exception:  # pragma: no cover — observer must never break the call path
+                    pass
+
         for pcfg, adapter in self._adapters:
             attempted_providers.append(pcfg.name)
 
@@ -130,8 +154,7 @@ class LLMGateway:
                 raw = await adapter.complete(prompt)
             except ProviderError:
                 latency_ms = int((time.monotonic() - t0) * 1000)
-                record_usage(
-                    db,
+                _record(
                     provider=pcfg.name,
                     model=pcfg.model,
                     prompt=prompt,
@@ -152,8 +175,7 @@ class LLMGateway:
                 obj = _parse_and_validate(raw.content, output_schema)
             except (ValidationError, ValueError, KeyError):
                 # Validation failed — attempt exactly one repair on the SAME provider.
-                record_usage(
-                    db,
+                _record(
                     provider=pcfg.name,
                     model=pcfg.model,
                     prompt=prompt,
@@ -191,8 +213,7 @@ class LLMGateway:
                 try:
                     obj = _parse_and_validate(repair_raw.content, output_schema)
                 except (ValidationError, ValueError, KeyError):
-                    record_usage(
-                        db,
+                    _record(
                         provider=pcfg.name,
                         model=pcfg.model,
                         prompt=repair_prompt,
@@ -208,8 +229,7 @@ class LLMGateway:
                     raise StructuredOutputError(pcfg.name, raw.content)
 
                 # Repair succeeded.
-                record_usage(
-                    db,
+                _record(
                     provider=pcfg.name,
                     model=pcfg.model,
                     prompt=repair_prompt,
@@ -224,8 +244,7 @@ class LLMGateway:
                 return obj
 
             # Primary succeeded.
-            record_usage(
-                db,
+            _record(
                 provider=pcfg.name,
                 model=pcfg.model,
                 prompt=prompt,

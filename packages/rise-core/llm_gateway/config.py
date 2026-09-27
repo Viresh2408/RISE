@@ -42,6 +42,10 @@ class ProviderConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     timeout_seconds: float = 30.0
+    # Sampling temperature. None = provider default (omitted from the request).
+    # Benchmarks set 0.0 for maximally deterministic scoring where the provider
+    # supports it. Value is forwarded verbatim into the provider request body.
+    temperature: float | None = None
     # USD per token — set to 0.0 if pricing is unknown; used only for logging.
     cost_per_input_token: float = Field(default=0.0, ge=0.0)
     cost_per_output_token: float = Field(default=0.0, ge=0.0)

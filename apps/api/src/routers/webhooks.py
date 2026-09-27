@@ -532,33 +532,26 @@ async def slack_webhook(
                 )
 
             try:
+                # Record the human decision durably (single-use, idempotent).
+                #
+                # SECURITY: a Slack button click must NOT itself fabricate an
+                # ActionPlan and fire un-anchored execution. Doing so previously
+                # kicked off run_execution_agent() with a hardcoded restart_pod
+                # plan (auth-service-7890 / staging), no approved_plan_hash and no
+                # require_approved_hash anchor, and swallowed every exception — an
+                # autonomous, un-approved, un-audited side effect triggerable by any
+                # interactive payload. Real execution is driven only by the anchored
+                # API approve path (POST /incidents/{id}/actions/{action_id}/approve),
+                # which binds the persisted Approval anchor to the exact plan hash
+                # before any tool runs (ADR-005).
                 mark_approval_decided(act_id, "approved", redis_client)
-                import asyncio
-                from apps.agents.src.nodes.execution import run_execution_agent
-                state = {
-                    "tenant_id": str(uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")),
-                    "incident_id": target_incident_id,
-                    "action_plan": {
-                        "action_type": "restart_pod",
-                        "action_steps": [
-                            {"tool": "restart_pod", "params": {"namespace": "staging", "pod_name": "auth-service-7890"}}
-                        ],
-                        "rollback_plan": [],
-                        "plan_rationale": "Approved via Slack interactive card",
-                    },
-                    "human_approval": "approved",
-                }
-                try:
-                    asyncio.create_task(run_execution_agent(state))
-                except Exception:
-                    pass
 
                 return build_response(
                     data={
                         "status": "approved",
                         "incident_id": target_incident_id,
                         "action_id": act_id,
-                        "text": f"*Incident {target_incident_id} — APPROVED*\nAction execution queued.",
+                        "text": f"*Incident {target_incident_id} — APPROVED*\nDecision recorded; execution runs via the anchored approval API.",
                     }
                 )
             finally:

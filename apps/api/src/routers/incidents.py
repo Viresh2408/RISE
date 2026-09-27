@@ -401,6 +401,7 @@ async def get_incident(
         incident = db.execute(
             select(Incident).where(
                 Incident.id == inc_uuid,
+                Incident.tenant_id == tenant_id,
             )
         ).scalar_one_or_none()
     except Exception as exc:

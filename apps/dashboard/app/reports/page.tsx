@@ -98,7 +98,7 @@ export default function ReportsPage() {
   const [toDate, setToDate] = useState('2026-08-09');
 
   const fetchReports = async () => {
-    const token = session?.token || 'demo-token-hardcoded';
+    const token = session?.token || '';
     setLoading(true);
     try {
       const [mttrData, autonomyData] = await Promise.all([

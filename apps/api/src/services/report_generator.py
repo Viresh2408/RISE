@@ -127,12 +127,18 @@ def build_incident_report_data(
         risk_score = ia_row.risk_score or 0
 
     if risk_score <= 0:
+        # NB: compute_risk_score() is keyword-only with a fixed signature
+        # (blast_radius_services / severity / estimated_users_affected / confidence /
+        # correlated_events_count / topology_missing). Passing the old
+        # blast_radius_count / affected_users / criticality kwargs raised a TypeError
+        # on this exact `risk_score <= 0` fallback path — see regression test
+        # tests/test_report_risk_score_regression.py.
         risk_score = compute_risk_score(
+            blast_radius_services=blast_radius_services,
             severity=incident.severity,
-            blast_radius_count=len(blast_radius_services),
-            affected_users=estimated_users,
-            criticality="high" if incident.severity == "SEV1" else "normal",
+            estimated_users_affected=estimated_users,
             confidence=rc_row.confidence if rc_row else 0.85,
+            correlated_events_count=len(evidence_items),
         )
 
     # Remediation Action(s), Approvals & Execution Logs

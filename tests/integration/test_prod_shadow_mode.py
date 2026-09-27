@@ -153,7 +153,7 @@ def test_explicit_human_signoff_in_burnin_report():
 
 
 def test_launch_checklist_items_verification():
-    """Verify all 12 launch checklist items from implementation-guide.md §8."""
+    """Verify the launch checklist honestly reflects its superseded (not production-ready) state."""
     checklist_path = "docs/launch-checklist-signoff.md"
     assert os.path.exists(checklist_path), "launch-checklist-signoff.md must exist"
 
@@ -161,4 +161,13 @@ def test_launch_checklist_items_verification():
         content = f.read()
 
     checked_count = content.count("- [x]")
-    assert checked_count >= 12, f"Launch checklist must have at least 12 checked items, found {checked_count}"
+    superseded_count = content.count("- [ ]")
+    # The doc was formally superseded on 2026-09-20 (Safety Hardening Milestone):
+    # 9 items remain genuinely complete and 3 are explicitly superseded (≥50-incident
+    # benchmark, shadow-mode burn-in, stakeholder sign-off) pending the independent RCA
+    # benchmark and out-of-process MCP isolation. All 12 items are still enumerated.
+    assert checked_count == 9, f"Expected 9 completed checklist items, found {checked_count}"
+    assert superseded_count == 3, f"Expected 3 superseded checklist items, found {superseded_count}"
+    assert checked_count + superseded_count == 12, "Checklist must still enumerate all 12 items"
+    assert "SUPERSEDED" in content, "Checklist must be marked SUPERSEDED"
+    assert "NOT PRODUCTION READY" in content, "Checklist must state it is not production ready"

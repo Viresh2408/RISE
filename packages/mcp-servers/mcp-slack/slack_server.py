@@ -6,8 +6,11 @@ Exposes Slack integration tools per mcp.md §2:
 - `read_thread`
 - `update_message`
 
-Supports real Slack API if bot token is provided, with graceful fallback to staging fixture outputs.
-Interactive approval cards strictly match prompts.md §9 field-for-field.
+NOTE (project stage): this server is a SIMULATED facade. Every handler returns a
+deterministic fixture payload; `bot_token` is accepted but currently unused — no real
+Slack Web API call is made. Interactive approval cards still match prompts.md §9
+field-for-field so downstream formatting/verification is exercised. Wiring real sends
+(slack_sdk WebClient / chat.postMessage) is intentionally out of scope for this stage.
 """
 
 from __future__ import annotations

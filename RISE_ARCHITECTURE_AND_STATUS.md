@@ -62,7 +62,7 @@
 
 8. **Comprehensive Testing & Evaluation Suite**:
    - **560+ automated tests** covering unit, integration, chaos resilience, security injection, and schema compliance.
-   - **Phase 5 Eval Suite (`eval/run_eval.py`)**: 20 Golden Ground-Truth Incidents (100% RCA accuracy) and 10 Adversarial Injection Scenarios (0 false auto-approvals).
+   - **Phase 5 Eval Suite (`eval/run_eval.py`)**: 20 Orchestration Certification Scenarios (100% state-machine routing certification; distinct from the separate Live RCA Benchmark Pilot in `eval/rca_judge.py`) and 10 Adversarial Injection Scenarios (0 false auto-approvals).
 
 ---
 
@@ -304,7 +304,7 @@ c:\Project\RISE\
 │   │   └── db\                  # SQLAlchemy ORM models, session providers, Alembic migrations
 │   └── mcp-servers\             # Isolated Tool Execution Daemons
 │       ├── mcp-kubernetes\      # Pod restart, deployment rollback, scaling, configmap patch
-│       ├── mcp-github\          # Git diff fetch, PR creation, commit rollback
+│       ├── mcp-github\          # SIMULATION / TEST FIXTURE ONLY (ADR-004) — real PR writes go via apps/api/src/services/github_service.py
 │       ├── mcp-aws\             # ECS update, Lambda rollback, ASG scaling
 │       ├── mcp-slack\           # Block-kit interactive messaging & channel alerts
 │       └── mcp-observability\   # Prometheus, Datadog, CloudWatch query tools
@@ -327,8 +327,8 @@ c:\Project\RISE\
 | :--- | :--- | :--- |
 | **Ingress Cryptography** | HMAC-SHA256 / RSA-X509 | Rejects unauthorized webhook payloads with HTTP 401. |
 | **OPA Policy Enforcement** | Open Policy Agent (Rego) | Blocks blacklisted commands (e.g. `rm -rf`, `DROP DATABASE`, unapproved cluster namespaces). |
-| **Resource Concurrency Locking** | Redis distributed mutex with TTL | Prevents concurrent agent executions from colliding on the same pod/service (HTTP 409). |
-| **Action Plan Hash Integrity** | SHA-256 Hash Matching | Rejects execution if an action plan payload was modified between approval and execution (HTTP 409). |
+| **Resource Concurrency Locking** | Redis distributed mutex with TTL | Prevents concurrent executions from colliding on the same resource (HTTP 409). Enforced by the MCP gateway for K8s/AWS tool dispatch (keyed on pod/service) **and** by the direct GitHub write path in `approve_action`, keyed on `{repo}:{target_file}` (ADR-004). |
+| **Action Plan Hash Integrity** | SHA-256 Hash Matching | Rejects execution if an action plan payload was modified between approval and execution (HTTP 409 `ACTION_PLAN_CHANGED`). Enforced in the Execution Agent, re-verified in the MCP gateway, **and** applied to the direct GitHub write path in `approve_action` (ADR-004). |
 | **Human-in-the-Loop (HITL)** | LangGraph Checkpoint Interrupt | Mandates human approval via Slack/Dashboard for any action with Risk Score $\ge 50$ or touching production. |
 | **Automated Rollback** | Verification Engine with SLA thresholding | Immediately reverts changes if post-execution health metrics or error rates fail SLA. |
 | **Audit Compliance** | Append-only Audit Trail | Records every actor, decision, parameter, and timestamp for SOC2/ISO27001 auditing. |

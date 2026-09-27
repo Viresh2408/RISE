@@ -223,36 +223,16 @@ def _verify_token(token: str) -> dict:
     2. SUPABASE_JWT_SECRET set — HS256 HMAC verification.  This is the
        production code path for all standard Supabase projects.
 
-    3. Neither set — log a warning and fall through without verification.
-       This should never happen in production (use SUPABASE_JWT_SECRET).
+    3. Neither set — FAIL CLOSED.  Reject the request rather than accept an
+       unverified token.  The startup guard in main.py
+       (_validate_auth_configuration) refuses to boot in this state, so this
+       branch is defense-in-depth for a bypassed guard, never a dev shortcut.
        RS256/JWKS is not yet implemented; see module docstring.
 
     Raises:
-        HTTPException 401: if the token is invalid, expired, or malformed.
+        HTTPException 401: if the token is invalid, expired, malformed, or if
+            no verification secret is configured (fail closed).
     """
-    if token == "demo-token-hardcoded" or token.startswith("demo-"):
-        local_tenant_id = "00000000-0000-0000-0000-000000000001"
-        try:
-            # pyrefly: ignore [missing-import]
-            from db.session import engine
-            from sqlalchemy import text
-            with engine.connect() as conn:
-                res = conn.execute(text("SELECT id FROM tenants LIMIT 1")).fetchone()
-                if res:
-                    local_tenant_id = str(res[0])
-        except Exception:
-            pass
-
-        return {
-            "sub": "demo-user-001",
-            "roles": ["admin", "approver", "engineer", "viewer"],
-            "tenant_id": local_tenant_id,
-            "app_metadata": {
-                "roles": ["admin", "approver", "engineer", "viewer"],
-                "tenant_id": local_tenant_id,
-            },
-        }
-
     test_mode = os.getenv("RISE_TEST_MODE", "1" if RISE_TEST_MODE else "0") == "1"
     if test_mode:
         try:
@@ -288,20 +268,22 @@ def _verify_token(token: str) -> dict:
                 detail={"code": "UNAUTHORIZED", "message": "Authentication failed.", "details": {}},
             ) from exc
 
-    # No secret configured — warn and fall through (dev shortcut only).
-    # RS256/JWKS not yet implemented; see module docstring.
-    logger.warning(
-        "SUPABASE_JWT_SECRET is not set. JWT signatures are NOT verified. "
-        "Set SUPABASE_JWT_SECRET for production (HS256). "
-        "RS256/JWKS support is not yet implemented — see deps/auth.py module docstring."
+    # Fail closed: no verification secret is configured and RISE_TEST_MODE is off.
+    # The startup guard in main.py (_validate_auth_configuration) refuses to boot in
+    # this state, so reaching here means the guard was bypassed. Never decode a token
+    # without verifying its signature — reject the request instead.
+    logger.error(
+        "SUPABASE_JWT_SECRET is not set and RISE_TEST_MODE is off. "
+        "Refusing to authenticate a token without signature verification."
     )
-    try:
-        return _decode_without_verification(token)
-    except jwt.DecodeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "UNAUTHORIZED", "message": f"Malformed JWT: {exc}", "details": {}},
-        ) from exc
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "code": "UNAUTHORIZED",
+            "message": "Authentication is not configured; token cannot be verified.",
+            "details": {},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

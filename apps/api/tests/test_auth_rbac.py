@@ -254,6 +254,55 @@ class TestStartupGuard:
             self._run_guard("1", "production")
 
 
+class TestAuthConfigurationGuard:
+    """main.py _validate_auth_configuration() must fail closed on a missing JWT secret (plan 0.3/0.5)."""
+
+    def _run_auth_guard(self, test_mode: str | None, secret: str | None) -> None:
+        """Call _validate_auth_configuration directly with patched env variables."""
+        old_test_mode = os.environ.get("RISE_TEST_MODE")
+        old_secret    = os.environ.get("SUPABASE_JWT_SECRET")
+        try:
+            if test_mode is None:
+                os.environ.pop("RISE_TEST_MODE", None)
+            else:
+                os.environ["RISE_TEST_MODE"] = test_mode
+            if secret is None:
+                os.environ.pop("SUPABASE_JWT_SECRET", None)
+            else:
+                os.environ["SUPABASE_JWT_SECRET"] = secret
+            import apps.api.src.main as main_mod
+            main_mod._validate_auth_configuration()
+        finally:
+            # Restore original env so subsequent tests (and the imported app) still work.
+            if old_test_mode is None:
+                os.environ.pop("RISE_TEST_MODE", None)
+            else:
+                os.environ["RISE_TEST_MODE"] = old_test_mode
+            if old_secret is None:
+                os.environ.pop("SUPABASE_JWT_SECRET", None)
+            else:
+                os.environ["SUPABASE_JWT_SECRET"] = old_secret
+
+    def test_missing_secret_without_test_mode_raises(self):
+        """No SUPABASE_JWT_SECRET and RISE_TEST_MODE off → refuse to start."""
+        with pytest.raises(RuntimeError, match="SUPABASE_JWT_SECRET is not set"):
+            self._run_auth_guard(test_mode=None, secret=None)
+
+    def test_empty_secret_without_test_mode_raises(self):
+        """A blank/whitespace secret is treated as unset."""
+        with pytest.raises(RuntimeError, match="refusing to start"):
+            self._run_auth_guard(test_mode="0", secret="   ")
+
+    def test_missing_secret_allowed_in_test_mode(self):
+        """RISE_TEST_MODE=1 permits boot without a secret (test/CI bypass)."""
+        self._run_auth_guard(test_mode="1", secret=None)  # must not raise
+
+    def test_secret_present_never_raises(self):
+        """A configured secret satisfies the guard."""
+        self._run_auth_guard(test_mode="0", secret="a-real-supabase-secret")  # must not raise
+
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. JWT Verification Middleware
 # ─────────────────────────────────────────────────────────────────────────────
@@ -300,6 +349,21 @@ class TestJWTVerification:
     def test_malformed_token_returns_401(self):
         r = client.get("/api/v1/incidents", headers={"Authorization": "Bearer not.a.jwt"})
         assert r.status_code == 401
+
+    def test_demo_token_backdoor_is_rejected(self):
+        """Regression (plan 0.1/0.5): no 'demo-' magic token grants access.
+
+        There must be no hardcoded auth backdoor. A literal 'demo-token-hardcoded'
+        (and any 'demo-' prefixed string) is not a valid HS256 JWT, so it must be
+        rejected exactly like any other invalid token — never treated as an admin.
+        """
+        for demo_token in ("demo-token-hardcoded", "demo-admin", "demo-"):
+            r = client.get(
+                "/api/v1/incidents",
+                headers={"Authorization": f"Bearer {demo_token}"},
+            )
+            assert r.status_code == 401, f"{demo_token!r} was not rejected"
+            assert r.json()["error"]["code"] == "UNAUTHORIZED"
 
     def test_valid_viewer_token_passes_middleware(self):
         r = client.get("/api/v1/incidents", headers=VIEWER_HEADERS)
@@ -878,4 +942,49 @@ class TestNoAuthEndpoints:
 
         assert r.status_code == 200
         assert r.json()["data"]["received"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. Cross-Tenant Isolation (IDOR) — GET /incidents/{id} must be tenant-scoped
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestCrossTenantIncidentIsolation:
+    """A user authenticated for tenant A must not read an incident owned by tenant
+    B via its id. GET /incidents/{id} previously filtered only on ``Incident.id``,
+    leaking incident rows across tenants (IDOR / broken object-level authorization).
+    It now scopes the query by the caller's ``tenant_id``."""
+
+    _FOREIGN_TENANT = "11111111-2222-3333-4444-555555555555"
+
+    def _seed_foreign_incident(self) -> str:
+        inc_id = uuid.uuid4()
+        with TestingSessionLocal() as db:
+            db.add(Incident(
+                id=inc_id,
+                tenant_id=uuid.UUID(self._FOREIGN_TENANT),
+                title="Foreign tenant incident",
+                description="Belongs to another tenant",
+                severity="SEV1",
+                status="open",
+            ))
+            db.commit()
+        return str(inc_id)
+
+    def test_cross_tenant_get_incident_is_not_leaked(self):
+        foreign_id = self._seed_foreign_incident()
+        # Caller is authenticated for the default TENANT_ID (aaaa...), not the owner.
+        r = client.get(f"/api/v1/incidents/{foreign_id}", headers=VIEWER_HEADERS)
+        assert r.status_code == 404, (
+            f"cross-tenant read must 404, got {r.status_code}: {r.text}"
+        )
+
+    def test_owner_tenant_can_read_its_own_incident(self):
+        """Positive control: the owning tenant still reads the same incident, proving
+        the tenant scoping did not over-restrict legitimate same-tenant access."""
+        foreign_id = self._seed_foreign_incident()
+        headers = _auth("viewer", tenant_id=self._FOREIGN_TENANT)
+        r = client.get(f"/api/v1/incidents/{foreign_id}", headers=headers)
+        assert r.status_code == 200, r.text
+        assert foreign_id in r.text
 

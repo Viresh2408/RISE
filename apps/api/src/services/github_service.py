@@ -18,24 +18,22 @@ DEFAULT_BRANCH = "main"
 
 
 def get_github_token() -> str:
+    """Return the GitHub personal access token from the environment.
+
+    Only ``GITHUB_TOKEN`` is consulted.  We deliberately do NOT fall back to
+    ``git credential fill``, ambient SSH agents, or any other ambient credential
+    store because those paths can silently pick up credentials in CI/test
+    environments and mask the true "no credential configured" state — which must
+    fail closed per the safety invariants.
+    """
     token = os.getenv("GITHUB_TOKEN", "").strip()
-    if token:
-        return token
-    try:
-        import subprocess
-        res = subprocess.run(
-            ["git", "credential", "fill"],
-            input="protocol=https\nhost=github.com\n\n",
-            capture_output=True,
-            text=True,
-            check=False,
+    if not token:
+        logger.warning(
+            "GITHUB_TOKEN is not set or is empty. "
+            "Set the GITHUB_TOKEN environment variable to a token with "
+            "contents:write and pull_requests:write permissions."
         )
-        for line in res.stdout.splitlines():
-            if line.startswith("password="):
-                return line.split("password=", 1)[1].strip()
-    except Exception:
-        pass
-    return ""
+    return token
 
 
 def apply_patch_to_text(original_text: str, file_path: str, incident_title: str) -> str:
@@ -142,20 +140,18 @@ async def commit_remediation_to_github(
     )
 
     if not token:
-        logger.warning("GITHUB_TOKEN not found in environment.")
-        pr_num = (abs(hash(incident_id)) % 90) + 10
+        logger.warning("No GitHub token or credentials available in environment.")
         return {
-            "success": True,
-            "commit_sha": f"sim-{short_id}-{int(now_utc.timestamp())}",
-            "commit_url": f"https://github.com/{owner}/{repo}/commit/sim-{short_id}",
-            "commit_message": commit_msg,
-            "commit_timestamp": timestamp_iso,
+            "success": False,
+            "error_code": "GITHUB_CREDENTIALS_UNAVAILABLE",
+            "error": "GitHub credentials unavailable; automated remediation fails closed and requires human review.",
+            "commit_sha": None,
+            "commit_url": None,
+            "branch": branch_name,
             "file": clean_file_path,
             "file_modified": clean_file_path,
-            "branch": branch_name,
-            "pr_url": f"https://github.com/{owner}/{repo}/pull/{pr_num}",
-            "pr_number": pr_num,
-            "html_url": f"https://github.com/{owner}/{repo}/pull/{pr_num}",
+            "pr_number": None,
+            "pr_url": None,
         }
 
     headers = {
@@ -167,21 +163,61 @@ async def commit_remediation_to_github(
     async with httpx.AsyncClient(timeout=20.0) as client:
         # 1. Fetch main branch ref SHA to branch off
         main_ref_url = f"https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{DEFAULT_BRANCH}"
-        main_ref_res = await client.get(main_ref_url, headers=headers)
-        base_sha = None
-        if main_ref_res.status_code == 200:
-            base_sha = main_ref_res.json().get("object", {}).get("sha")
+        try:
+            main_ref_res = await client.get(main_ref_url, headers=headers)
+        except Exception as exc:
+            logger.error("GitHub API connection error fetching main ref: %s", exc)
+            return {
+                "success": False,
+                "error_code": "GITHUB_NETWORK_ERROR",
+                "error": f"Failed to connect to GitHub API: {exc}",
+                "commit_sha": None,
+                "commit_url": None,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": None,
+                "pr_url": None,
+            }
+
+        if main_ref_res.status_code != 200:
+            return {
+                "success": False,
+                "error_code": f"GITHUB_HTTP_{main_ref_res.status_code}",
+                "error": f"Failed to fetch {DEFAULT_BRANCH} branch ref from GitHub: {main_ref_res.text}",
+                "commit_sha": None,
+                "commit_url": None,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": None,
+                "pr_url": None,
+            }
+
+        base_sha = main_ref_res.json().get("object", {}).get("sha")
+        if not base_sha:
+            return {
+                "success": False,
+                "error_code": "MISSING_BASE_SHA",
+                "error": f"GitHub response did not contain a valid SHA for {DEFAULT_BRANCH}",
+                "commit_sha": None,
+                "commit_url": None,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": None,
+                "pr_url": None,
+            }
 
         # 2. Create the remediation branch if it doesn't exist
-        if base_sha:
-            create_ref_url = f"https://api.github.com/repos/{owner}/{repo}/git/refs"
-            create_ref_payload = {
-                "ref": f"refs/heads/{branch_name}",
-                "sha": base_sha,
-            }
-            ref_create_res = await client.post(create_ref_url, headers=headers, json=create_ref_payload)
-            if ref_create_res.status_code not in (201, 422):
-                logger.warning(f"Could not create branch {branch_name}: {ref_create_res.text}")
+        create_ref_url = f"https://api.github.com/repos/{owner}/{repo}/git/refs"
+        create_ref_payload = {
+            "ref": f"refs/heads/{branch_name}",
+            "sha": base_sha,
+        }
+        ref_create_res = await client.post(create_ref_url, headers=headers, json=create_ref_payload)
+        if ref_create_res.status_code not in (201, 422):
+            logger.warning("Could not create branch %s (%d): %s", branch_name, ref_create_res.status_code, ref_create_res.text)
 
         # 3. Fetch file content from branch or main
         contents_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{clean_file_path}"
@@ -189,38 +225,48 @@ async def commit_remediation_to_github(
         if get_res.status_code != 200:
             get_res = await client.get(contents_url, headers=headers, params={"ref": DEFAULT_BRANCH})
 
-        file_sha: Optional[str] = None
-        current_content_str = ""
+        if get_res.status_code != 200:
+            return {
+                "success": False,
+                "error_code": "FILE_FETCH_FAILED",
+                "error": f"Target file '{clean_file_path}' could not be fetched from GitHub repository {owner}/{repo}: {get_res.text}",
+                "commit_sha": None,
+                "commit_url": None,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": None,
+                "pr_url": None,
+            }
 
-        if get_res.status_code == 200:
-            data = get_res.json()
-            file_sha = data.get("sha")
-            raw_b64 = data.get("content", "")
-            try:
-                current_content_str = base64.b64decode(raw_b64).decode("utf-8")
-            except Exception:
-                current_content_str = ""
-        elif os.path.exists(clean_file_path):
-            try:
-                with open(clean_file_path, "r", encoding="utf-8") as f:
-                    current_content_str = f.read()
-            except Exception:
-                current_content_str = ""
+        data = get_res.json()
+        file_sha: Optional[str] = data.get("sha")
+        raw_b64 = data.get("content", "")
+        try:
+            current_content_str = base64.b64decode(raw_b64).decode("utf-8")
+        except Exception as b64_err:
+            return {
+                "success": False,
+                "error_code": "DECODE_ERROR",
+                "error": f"Failed to decode file content from GitHub: {b64_err}",
+                "commit_sha": None,
+                "commit_url": None,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": None,
+                "pr_url": None,
+            }
 
-        # 4. Apply the patch to file content
+        # 4. Apply the patch to file content in memory (NEVER write to local checkout)
         updated_content_str = apply_patch_to_text(
             current_content_str, clean_file_path, incident_title
         )
 
-        # Also write change to local file on disk immediately
-        if os.path.exists(clean_file_path):
-            try:
-                with open(clean_file_path, "w", encoding="utf-8") as f:
-                    f.write(updated_content_str)
-            except Exception as e:
-                logger.warning(f"Could not write local patch: {e}")
+        if updated_content_str == current_content_str:
+            logger.info("File content unchanged after patch application")
 
-        # 5. Commit modified file to the remediation branch
+        # 5. Commit modified file to the remediation branch via GitHub REST API
         encoded_content = base64.b64encode(updated_content_str.encode("utf-8")).decode("utf-8")
         put_payload: Dict[str, Any] = {
             "message": commit_msg,
@@ -239,39 +285,40 @@ async def commit_remediation_to_github(
             put_payload["sha"] = file_sha
 
         put_res = await client.put(contents_url, headers=headers, json=put_payload)
-        commit_sha = ""
-        commit_url = ""
+        if put_res.status_code not in (200, 201):
+            logger.error("GitHub contents PUT returned %d: %s", put_res.status_code, put_res.text)
+            return {
+                "success": False,
+                "error_code": f"GITHUB_COMMIT_FAILED_{put_res.status_code}",
+                "error": f"GitHub contents commit failed with HTTP {put_res.status_code}: {put_res.text}",
+                "commit_sha": None,
+                "commit_url": None,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": None,
+                "pr_url": None,
+            }
 
-        if put_res.status_code in (200, 201):
-            res_data = put_res.json()
-            commit_data = res_data.get("commit", {})
-            commit_sha = commit_data.get("sha", "")
-            commit_url = commit_data.get("html_url") or f"https://github.com/{owner}/{repo}/commit/{commit_sha}"
-        else:
-            logger.warning(f"GitHub contents PUT returned {put_res.status_code}: {put_res.text}. Executing git CLI push to branch...")
-            # Fallback to local git CLI push to branch
-            import subprocess
-            try:
-                subprocess.run(["git", "checkout", "-B", branch_name], capture_output=True, text=True, check=False)
-                subprocess.run(["git", "add", clean_file_path], capture_output=True, text=True, check=False)
-                subprocess.run(["git", "commit", "-m", commit_msg], capture_output=True, text=True, check=False)
-                git_rev = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False)
-                if git_rev.returncode == 0 and git_rev.stdout.strip():
-                    commit_sha = git_rev.stdout.strip()
-                
-                # First attempt push using local git credential manager
-                push_res = subprocess.run(["git", "push", "-u", "origin", branch_name], capture_output=True, text=True, check=False)
-                if push_res.returncode != 0 and token:
-                    # Retry with authenticated URL
-                    remote_auth_url = f"https://{token}@github.com/{owner}/{repo}.git"
-                    push_res = subprocess.run(["git", "push", "-u", remote_auth_url, branch_name], capture_output=True, text=True, check=False)
-                
-                # Switch back to main locally
-                subprocess.run(["git", "checkout", DEFAULT_BRANCH], capture_output=True, text=True, check=False)
-                commit_url = f"https://github.com/{owner}/{repo}/commit/{commit_sha}"
-                logger.info(f"Pushed branch {branch_name} to GitHub. Result: {push_res.returncode}")
-            except Exception as cli_err:
-                logger.error(f"Git CLI push error: {cli_err}")
+        res_data = put_res.json()
+        commit_data = res_data.get("commit", {})
+        commit_sha = commit_data.get("sha")
+        if not commit_sha or not isinstance(commit_sha, str) or len(commit_sha) < 7:
+            logger.error("GitHub API returned invalid commit SHA: %s", commit_data)
+            return {
+                "success": False,
+                "error_code": "INVALID_COMMIT_SHA",
+                "error": "GitHub API response missing valid commit SHA",
+                "commit_sha": None,
+                "commit_url": None,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": None,
+                "pr_url": None,
+            }
+
+        commit_url = commit_data.get("html_url") or f"https://github.com/{owner}/{repo}/commit/{commit_sha}"
 
         # 6. Create the GitHub Pull Request automatically
         pr_url = ""
@@ -290,9 +337,9 @@ async def commit_remediation_to_github(
                 pr_data = pr_res.json()
                 pr_url = pr_data.get("html_url", "")
                 pr_number = pr_data.get("number")
-                logger.info(f"Successfully opened GitHub Pull Request #{pr_number}: {pr_url}")
+                logger.info("Successfully opened GitHub Pull Request #%s: %s", pr_number, pr_url)
             elif pr_res.status_code == 422:
-                # PR may already exist for this branch, fetch it
+                # PR may already exist for this branch, lookup open PR
                 existing_prs_res = await client.get(
                     pulls_endpoint,
                     headers=headers,
@@ -303,16 +350,27 @@ async def commit_remediation_to_github(
                     if prs and len(prs) > 0:
                         pr_url = prs[0].get("html_url", "")
                         pr_number = prs[0].get("number")
-                        logger.info(f"Found existing GitHub Pull Request #{pr_number}: {pr_url}")
+                        logger.info("Found existing open GitHub Pull Request #%s: %s", pr_number, pr_url)
+            else:
+                logger.error("GitHub PR creation returned %d: %s", pr_res.status_code, pr_res.text)
+                return {
+                    "success": False,
+                    "error_code": f"GITHUB_PR_CREATE_HTTP_{pr_res.status_code}",
+                    "error": f"GitHub Pull Request creation failed ({pr_res.status_code}): {pr_res.text}",
+                    "commit_sha": commit_sha,
+                    "commit_url": commit_url,
+                    "branch": branch_name,
+                    "file": clean_file_path,
+                    "file_modified": clean_file_path,
+                    "pr_number": None,
+                    "pr_url": None,
+                }
         except Exception as pr_err:
-            logger.warning(f"Failed calling GitHub pulls API: {pr_err}")
-
-        if not pr_number or not pr_url:
-            err_detail = pr_res.text if 'pr_res' in locals() else "No PR created"
-            logger.error(f"GitHub Pull Request creation failed for branch {branch_name}: {err_detail}")
+            logger.error("Failed calling GitHub pulls API: %s", pr_err)
             return {
                 "success": False,
-                "error": f"GitHub Pull Request creation failed: {err_detail}",
+                "error_code": "GITHUB_PR_API_ERROR",
+                "error": f"Failed calling GitHub pulls API: {pr_err}",
                 "commit_sha": commit_sha,
                 "commit_url": commit_url,
                 "branch": branch_name,
@@ -322,10 +380,88 @@ async def commit_remediation_to_github(
                 "pr_url": None,
             }
 
+        # 7. Validate PR entity format
+        if not pr_number or not isinstance(pr_number, int) or pr_number <= 0 or not pr_url or not isinstance(pr_url, str) or f"/pull/{pr_number}" not in pr_url:
+            return {
+                "success": False,
+                "error_code": "INVALID_PR_ENTITY",
+                "error": f"GitHub response missing valid Pull Request entity (number={pr_number}, url={pr_url})",
+                "commit_sha": commit_sha,
+                "commit_url": commit_url,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": None,
+                "pr_url": None,
+            }
+
+        # 8. Independent re-fetch verification: Verify that PR genuinely exists and is open on GitHub
+        verify_pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+        try:
+            verify_res = await client.get(verify_pr_url, headers=headers)
+        except Exception as v_err:
+            return {
+                "success": False,
+                "error_code": "PR_VERIFICATION_NETWORK_ERROR",
+                "error": f"Network error during independent PR verification on GitHub: {v_err}",
+                "commit_sha": commit_sha,
+                "commit_url": commit_url,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": pr_number,
+                "pr_url": pr_url,
+            }
+
+        if verify_res.status_code != 200:
+            return {
+                "success": False,
+                "error_code": "PR_VERIFICATION_FAILED",
+                "error": f"Created PR #{pr_number} could not be independently re-verified on GitHub (HTTP {verify_res.status_code})",
+                "commit_sha": commit_sha,
+                "commit_url": commit_url,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": pr_number,
+                "pr_url": pr_url,
+            }
+
+        verify_data = verify_res.json()
+        pr_state = verify_data.get("state")
+        if pr_state != "open":
+            return {
+                "success": False,
+                "error_code": "PR_NOT_OPEN",
+                "error": f"PR #{pr_number} re-fetched from GitHub has state '{pr_state}' (expected 'open')",
+                "commit_sha": commit_sha,
+                "commit_url": commit_url,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": pr_number,
+                "pr_url": pr_url,
+            }
+
+        repo_full_name = verify_data.get("base", {}).get("repo", {}).get("full_name", "")
+        if repo_full_name and repo_full_name.lower() != f"{owner}/{repo}".lower():
+            return {
+                "success": False,
+                "error_code": "REPO_MISMATCH",
+                "error": f"PR #{pr_number} repository '{repo_full_name}' does not match expected '{owner}/{repo}'",
+                "commit_sha": commit_sha,
+                "commit_url": commit_url,
+                "branch": branch_name,
+                "file": clean_file_path,
+                "file_modified": clean_file_path,
+                "pr_number": pr_number,
+                "pr_url": pr_url,
+            }
+
         return {
             "success": True,
-            "commit_sha": commit_sha or f"sha-{short_id}",
-            "commit_url": commit_url or f"https://github.com/{owner}/{repo}/commit/{commit_sha}",
+            "commit_sha": commit_sha,
+            "commit_url": commit_url,
             "commit_message": commit_msg,
             "commit_timestamp": timestamp_iso,
             "file": clean_file_path,
@@ -335,3 +471,4 @@ async def commit_remediation_to_github(
             "pr_number": pr_number,
             "html_url": pr_url,
         }
+

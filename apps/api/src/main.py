@@ -202,9 +202,56 @@ def _validate_github_configuration() -> None:
                 ) from e
 
 
+def _validate_mcp_configuration() -> None:
+    """Validate MCP transport configuration on startup.
+
+    Production and staging startup must reject write-enabled mocked MCP transports.
+    Until out-of-process MCP isolation exists, autonomous production remediation is blocked.
+    """
+    environment = os.getenv("ENVIRONMENT", "local").lower().strip()
+    is_prod_env = environment in ("production", "prod", "staging")
+
+    if is_prod_env:
+        if os.getenv("RISE_ALLOW_MCP_TEST_MOCKS", "0") == "1":
+            raise RuntimeError(
+                f"SECURITY VIOLATION: RISE_ALLOW_MCP_TEST_MOCKS=1 is forbidden in ENVIRONMENT='{environment}'. "
+                "Write-enabled mocked MCP transports cannot run in staging or production."
+            )
+
+
+def _validate_auth_configuration() -> None:
+    """Refuse to start if JWT signatures cannot be verified.
+
+    Fail closed: unless RISE_TEST_MODE=1 (a test/CI-only bypass already constrained
+    by _assert_safe_test_mode above), SUPABASE_JWT_SECRET must be set so incoming
+    Bearer tokens can have their HS256 signatures verified.  A missing secret
+    previously caused deps/auth.py to "warn and fall through", accepting unverified
+    tokens; that hole is closed here by refusing to boot in any environment.
+
+    Environment variables read:
+        RISE_TEST_MODE       – "1" enables the test-only signature bypass.
+        SUPABASE_JWT_SECRET  – HS256 secret from Supabase → Settings → API → JWT Secret.
+    """
+    test_mode = os.getenv("RISE_TEST_MODE", "0") == "1"
+    if test_mode:
+        return  # test-mode bypass is already environment-guarded by _assert_safe_test_mode
+
+    secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
+    if not secret:
+        raise RuntimeError(
+            "CONFIGURATION ERROR: SUPABASE_JWT_SECRET is not set and RISE_TEST_MODE is off. "
+            "JWT signatures cannot be verified — refusing to start. Set SUPABASE_JWT_SECRET "
+            "(HS256 secret from Supabase → Settings → API → JWT Secret), or set RISE_TEST_MODE=1 "
+            "in a local/CI environment."
+        )
+
+
 # Run the guards before anything else is imported so misconfigured deploys fail immediately
 _assert_safe_test_mode()
+_validate_auth_configuration()
 _validate_github_configuration()
+_validate_mcp_configuration()
+
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -253,10 +300,19 @@ app = FastAPI(
 
 from fastapi.middleware.cors import CORSMiddleware
 
-# Enable CORS for frontend dashboard
+# CORS: serve an explicit allow-list of origins from the environment.
+# CORS_ALLOWED_ORIGINS is a comma-separated list; it defaults to the local dev
+# dashboard origin. A wildcard ("*") is intentionally NOT used — it is invalid
+# alongside allow_credentials=True and would expose the credentialed API to any origin.
+_cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -54,11 +54,18 @@ class AgentState(TypedDict, total=False):
     retry_counts: dict
     should_escalate: bool
     error: str
+    error_code: str
     status: str  # "running" | "completed" | "escalated" | "manual_handoff"
     requires_approval: bool
     risk_tier: str
     confidence: float
     runbook_match: dict
+
+    # Approval anchoring (ADR-005): the plan hash the human approved and the flag
+    # that forces execution to run only against that anchor. Declared as channels
+    # so they survive the await_human interrupt/checkpoint into the execute node.
+    approved_plan_hash: str
+    require_approved_hash: bool
 
 
 def _to_jsonable(obj: Any) -> Any:
@@ -312,6 +319,30 @@ def node_await_human(state: AgentState) -> AgentState:
     if not res.get("await_human_reason"):
         res["await_human_reason"] = "approval_required"
 
+    # SECURITY (ADR-005): bind the exact plan the human is being asked to approve
+    # to a hash anchor, and require that anchor at execution time. Without this the
+    # orchestrator's human-approval path executed UN-ANCHORED: the plan sitting in
+    # the checkpointed state could be mutated between approval and execution and
+    # would still run. We compute the hash exactly the way run_execution_agent will
+    # (via coerce_action_plan) so an unchanged plan matches and only a tampered plan
+    # trips ACTION_PLAN_CHANGED. The auto-execute path (requires_approval False)
+    # never reaches this node, so low-risk autonomous remediation is unaffected; the
+    # auto-rollback sub-execution deliberately clears this anchor (see node_rollback).
+    raw_plan = res.get("action_plan") or (res.get("decision") or {}).get("action_plan")
+    if raw_plan:
+        try:
+            from apps.agents.src.nodes.execution import coerce_action_plan
+            from mcp_client.hash import compute_action_plan_hash
+
+            anchored_plan = coerce_action_plan(raw_plan)
+            res["approved_plan_hash"] = compute_action_plan_hash(anchored_plan)
+            res["require_approved_hash"] = True
+        except Exception as exc:
+            # Fail closed: if we cannot anchor the plan, still require an anchor so
+            # execution refuses to run rather than proceeding un-anchored.
+            logger.error("Failed to anchor approved plan hash: %s", exc)
+            res["require_approved_hash"] = True
+
     # Render Slack approval card per prompts.md §9
     card = format_slack_approval_card(res)
     res["slack_card"] = card
@@ -393,10 +424,18 @@ def node_rollback(state: AgentState) -> AgentState:
             "action_steps": rollback_steps,
             "rollback_plan": [],
             "plan_rationale": "Auto-rollback triggered on verification failure",
+            "requires_manual_plan": True,
         }
         rollback_state = dict(res)
         rollback_state["action_plan"] = rollback_action_plan
+        # The auto-rollback plan is a system-generated safety action, NOT the
+        # human-approved forward plan, so it deliberately runs un-anchored. Clear
+        # both the forward anchor hash and the require_approved_hash flag that the
+        # approval gate (node_await_human) sets on the forward path — otherwise the
+        # inherited flag would make this legitimate rollback fail closed with a
+        # spurious ACTION_PLAN_CHANGED.
         rollback_state["approved_plan_hash"] = None
+        rollback_state["require_approved_hash"] = False
         try:
             exec_res = asyncio.run(run_execution_agent(rollback_state))
             res["rollback_execution_log"] = exec_res.get("execution_log")

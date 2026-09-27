@@ -16,7 +16,7 @@ Environment (reads from .env automatically)
 -------------------------------------------
   API_BASE_URL       Backend URL  (default: http://localhost:8000)
   DASHBOARD_URL      Frontend URL (default: http://localhost:3000)
-  RISE_TEST_TOKEN    JWT token for authenticated tests (default: demo-token-hardcoded)
+  RISE_TEST_TOKEN    JWT token for authenticated tests (required for auth-gated checks)
   GITHUB_TOKEN       Used to test the GitHub file-preview endpoint
   GITHUB_REPO        Primary repo  (default: Viresh2408/RISE)
   GITHUB_MONITOR_REPO_2  Secondary repo slug to test (optional)
@@ -43,7 +43,7 @@ if _env_file.exists():
 # -- Config -------------------------------------------------------------------
 API_BASE    = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 DASH_BASE   = os.getenv("DASHBOARD_URL", "http://localhost:3000").rstrip("/")
-TOKEN       = os.getenv("RISE_TEST_TOKEN", "demo-token-hardcoded")
+TOKEN       = os.getenv("RISE_TEST_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Viresh2408/RISE")
 REPO2       = os.getenv("GITHUB_MONITOR_REPO_2", "").strip()
 

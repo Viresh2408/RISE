@@ -58,7 +58,7 @@ export default function IncidentsDashboard() {
   const canCreate = hasRole('engineer');
 
   const fetchIncidents = async (silent = false) => {
-    const activeToken = session?.token || 'demo-token-hardcoded';
+    const activeToken = session?.token || '';
     if (!silent) setLoading(true);
 
     try {
@@ -82,7 +82,7 @@ export default function IncidentsDashboard() {
 
   // Realtime Subscription with Deduplicated 3s Polling Fallback
   useEffect(() => {
-    const activeToken = session?.token || 'demo-token-hardcoded';
+    const activeToken = session?.token || '';
 
     const channel = supabase
       .channel('public:incidents')

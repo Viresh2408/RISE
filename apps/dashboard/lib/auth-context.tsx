@@ -31,14 +31,6 @@ const ROLE_HIERARCHY: Record<string, string[]> = {
 
 const STORAGE_KEY = 'rise_session';
 
-const DEFAULT_DEMO_SESSION: UserSession = {
-  user_id: 'demo-user-001',
-  email: 'demo@rise.internal',
-  roles: ['admin', 'approver', 'engineer', 'viewer'],
-  tenant_id: '00000000-0000-0000-0000-000000000001',
-  token: 'demo-token-hardcoded',
-};
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSessionState] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,15 +58,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
       saveSession(newSession);
     } catch (err) {
-      console.warn('Backend session exchange fallback to token context:', err);
-      const fallbackSession: UserSession = {
-        user_id: 'user-001',
-        email: userEmail,
-        roles: ['approver', 'engineer', 'viewer'],
-        tenant_id: '00000000-0000-0000-0000-000000000001',
-        token: jwtToken,
-      };
-      saveSession(fallbackSession);
+      // SECURITY: never fabricate an elevated session when the backend session
+      // exchange fails. The previous fallback invented roles
+      // (['approver','engineer','viewer']), a user_id ('user-001') and a tenant,
+      // showing privileged controls (approve/reject) to a user whose session
+      // could not actually be established. Fail closed instead: clear any session
+      // and propagate the error so the UI renders a "cannot reach backend" state
+      // and the user re-authenticates against a healthy backend. Real
+      // authorization is enforced server-side per request, but the client must
+      // not display privileges it cannot substantiate.
+      console.error('Backend session exchange failed; failing closed (no session):', err);
+      saveSession(null);
+      throw err;
     }
   };
 
@@ -93,8 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           localStorage.removeItem(STORAGE_KEY);
         }
       } else {
-        // Fallback default demo session for smooth local development
-        saveSession(DEFAULT_DEMO_SESSION);
+        // No stored session — remain unauthenticated until a real login occurs.
         setLoading(false);
       }
     }
@@ -102,9 +96,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // 2. Check Supabase auth session asynchronously to stay in sync
     supabase.auth.getSession().then(({ data: { session: supaSession } }) => {
       if (supaSession?.access_token) {
-        fetchBackendSession(supaSession.access_token, supaSession.user?.email || 'user@rise.internal').finally(() =>
-          setLoading(false)
-        );
+        fetchBackendSession(supaSession.access_token, supaSession.user?.email || 'user@rise.internal')
+          .catch(() => {
+            // fetchBackendSession already failed closed (session cleared); swallow
+            // here so the effect has no unhandled rejection.
+          })
+          .finally(() => setLoading(false));
       } else {
         setLoading(false);
       }
@@ -114,7 +111,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, supaSession) => {
       if (supaSession?.access_token) {
-        fetchBackendSession(supaSession.access_token, supaSession.user?.email || 'user@rise.internal');
+        fetchBackendSession(supaSession.access_token, supaSession.user?.email || 'user@rise.internal').catch(() => {
+          // fetchBackendSession already failed closed (session cleared).
+        });
       }
       setLoading(false);
     });
@@ -124,27 +123,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, pass: string) => {
     setLoading(true);
-
-    // ── DEMO BYPASS (local testing only) ─────────────────────────────────────
-    if (email === 'demo@rise.internal' && pass === 'demo1234') {
-      saveSession(DEFAULT_DEMO_SESSION);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password: pass,
+      });
+      if (error) {
+        throw error;
+      }
+      if (data.session?.access_token) {
+        await fetchBackendSession(data.session.access_token, email);
+      }
+    } finally {
       setLoading(false);
-      return;
     }
-    // ─────────────────────────────────────────────────────────────────────────
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password: pass,
-    });
-    if (error) {
-      setLoading(false);
-      throw error;
-    }
-    if (data.session?.access_token) {
-      await fetchBackendSession(data.session.access_token, email);
-    }
-    setLoading(false);
   };
 
   const logout = async () => {

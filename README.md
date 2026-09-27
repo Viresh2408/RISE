@@ -261,7 +261,7 @@ flowchart TB
         subgraph NS_MCP["MCP Tool Servers"]
             MCPK[mcp-kubernetes]
             MCPA[mcp-aws]
-            MCPG[mcp-github]
+            MCPG["mcp-github<br/>(simulation fixture — ADR-004)"]
         end
         subgraph NS_DASH["rise-dashboard"]
             DASH[Next.js Pods]
@@ -292,10 +292,11 @@ flowchart TB
 
     CF --> API --> WORK
     API --> DASH
-    WORK --> MCPK & MCPA & MCPG
+    WORK --> MCPK & MCPA
+    WORK -.->|"offline / CI sim only"| MCPG
     WORK --> PG & RD & QD & S3
     WORK --> GRQ & GEM & OAI & BR
-    MCPG --> GH
+    API -->|"canonical GitHub write path<br/>(github_service, ADR-004)"| GH
     WORK --> SLK
     NS_OBS -.monitors.-> K8S
 ```

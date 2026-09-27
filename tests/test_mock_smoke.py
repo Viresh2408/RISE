@@ -203,7 +203,24 @@ class TestApiApproval:
             json={"note": "no idempotency key"},
         ).json()["error"]["code"] == "VALIDATION_ERROR"
 
-    def test_approve_with_idempotency_key_returns_200(self):
+    def test_approve_with_idempotency_key_returns_200(self, monkeypatch):
+        # Hermetic fail-closed: stub the canonical GitHub path to its no-credentials
+        # result so the suite never writes to the live repo (a real GITHUB_TOKEN may be
+        # present in .env, and actions.py imports github_service lazily, which re-runs
+        # load_dotenv()). See ADR-004.
+        async def _commit_failclosed(incident_id, incident_title, target_file="packages/rise-core/db/session.py", branch=None):
+            return {
+                "success": False,
+                "error_code": "GITHUB_CREDENTIALS_UNAVAILABLE",
+                "error": "GitHub credentials unavailable; automated remediation fails closed and requires human review.",
+                "commit_sha": None, "commit_url": None, "branch": branch,
+                "file": target_file, "file_modified": target_file,
+                "pr_number": None, "pr_url": None,
+            }
+        monkeypatch.setattr(
+            "apps.api.src.services.github_service.commit_remediation_to_github",
+            _commit_failclosed,
+        )
         headers = {**APPROVER, "Idempotency-Key": str(uuid.uuid4())}
         r = client.post(
             "/api/v1/incidents/inc-001/actions/act-001/approve",
@@ -212,7 +229,9 @@ class TestApiApproval:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["data"]["status"] == "approved"
+        # Fail-closed contract: no live GitHub creds in test env → correct refusal,
+        # surfaced as requires_human (not a fabricated 'approved').
+        assert body["data"]["status"] == "requires_human"
         assert body["error"] is None
 
     @pytest.mark.parametrize("action_id,code", [

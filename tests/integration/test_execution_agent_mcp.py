@@ -23,11 +23,11 @@ for _dir in ["mcp-kubernetes", "mcp-aws", "mcp-github"]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from mcp_client.gateway import MCPGateway, ToolBlockedError
+from mcp_client.gateway import MCPGateway, ToolBlockedError, AuditWriteError
 from mcp_client.hash import compute_action_plan_hash
 from mcp_client.lock import ResourceLockManager, ResourceLockedException, clear_all_in_memory_locks
 from kubernetes_server import MCPKubernetesServer
-from github_server import MCPGitHubServer
+from github_server import MCPGitHubServer, reset_test_fixtures
 from apps.agents.src.nodes.execution import run_execution_agent
 from schemas.agent_state import ActionPlan, ActionStep
 
@@ -85,7 +85,7 @@ async def test_dod1_unapproved_tool_blocked_and_audit_logged():
             db_session=db_session,
         )
 
-    assert "blocked by OPA allow-list" in str(exc_info.value)
+    assert "blocked by allow-list" in str(exc_info.value)
 
     # Confirm audit log captured the blocked attempt
     assert len(db_session.events) == 1
@@ -294,7 +294,11 @@ async def test_dod4_every_tool_call_produces_audit_log():
 
 @pytest.mark.anyio
 async def test_github_create_pr_idempotent_on_retry():
-    gh_server = MCPGitHubServer()
+    # This test exercises the in-memory mock PR registry (idempotency logic), which is
+    # a dev/test-only path. The mock transport is fail-closed by default, so opt in
+    # explicitly via allow_test_mock (rejected in staging/prod by MCPGitHubServer).
+    reset_test_fixtures()
+    gh_server = MCPGitHubServer(allow_test_mock=True)
 
     # First call
     pr1 = gh_server.create_pr(
@@ -373,4 +377,147 @@ async def test_mcp_server_instance_isolation():
         environment="staging",
     )
     assert result_b.get("status") == "success"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.2: Gateway-level defense-in-depth (enforced regardless of caller)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_gateway_blocks_write_tool_when_resource_locked_by_other_owner():
+    """A direct gateway caller must not bypass a plan-level lock held by another incident."""
+    gw = MCPGateway()
+    resource_id = "staging:auth-service"
+
+    # Another remediation (different incident) currently holds the resource lock.
+    ResourceLockManager.acquire_lock(resource_id=resource_id, owner_id="incident-OTHER")
+
+    with pytest.raises(ToolBlockedError) as exc_info:
+        await gw.dispatch_tool_call(
+            agent_identity="execution-agent",
+            tool_name="restart_pod",
+            params={"namespace": "staging", "pod_name": "auth-service-7890"},
+            environment="staging",
+            incident_id="incident-MINE",
+            resource_id=resource_id,
+        )
+
+    assert exc_info.value.reason == "resource_locked"
+    assert "locked by another remediation" in str(exc_info.value)
+
+
+@pytest.mark.anyio
+async def test_gateway_allows_write_tool_for_same_owner_lock():
+    """The lock check is re-entrant for the owning incident (no false RESOURCE_LOCKED)."""
+    gw = MCPGateway()
+    resource_id = "staging:auth-service-2"
+    pod_name = "auth-service-7890"
+
+    plan = ActionPlan(
+        action_type="restart_pod",
+        action_steps=[ActionStep(tool="restart_pod", params={"namespace": "staging", "pod_name": pod_name})],
+        rollback_plan=[ActionStep(tool="rollback_deployment", params={"deploy": "auth-service"})],
+        plan_rationale="Restart pod",
+    )
+    plan_hash = compute_action_plan_hash(plan)
+
+    # The owning incident holds the lock (as the Execution Agent would).
+    ResourceLockManager.acquire_lock(resource_id=resource_id, owner_id="incident-MINE")
+
+    res = await gw.dispatch_tool_call(
+        agent_identity="execution-agent",
+        tool_name="restart_pod",
+        params={"namespace": "staging", "pod_name": pod_name},
+        approved_plan=plan,
+        approved_plan_hash=plan_hash,
+        step_index=0,
+        environment="staging",
+        incident_id="incident-MINE",
+        resource_id=resource_id,
+    )
+    assert res["status"] == "success"
+
+
+@pytest.mark.anyio
+async def test_gateway_reverifies_plan_hash_and_blocks_tampered_plan():
+    """The gateway independently re-verifies the approved-plan hash (defense-in-depth)."""
+    gw = MCPGateway()
+
+    plan = ActionPlan(
+        action_type="restart_pod",
+        action_steps=[ActionStep(tool="restart_pod", params={"namespace": "staging", "pod_name": "auth-service-7890"})],
+        rollback_plan=[ActionStep(tool="rollback_deployment", params={"deploy": "auth-service"})],
+        plan_rationale="Restart pod",
+    )
+    wrong_hash = "0" * 64  # Hash that does not match `plan`
+
+    with pytest.raises(ToolBlockedError) as exc_info:
+        await gw.dispatch_tool_call(
+            agent_identity="execution-agent",
+            tool_name="restart_pod",
+            params={"namespace": "staging", "pod_name": "auth-service-7890"},
+            approved_plan=plan,
+            approved_plan_hash=wrong_hash,
+            step_index=0,
+            environment="staging",
+            incident_id=str(uuid.uuid4()),
+        )
+
+    assert exc_info.value.reason == "action_plan_changed"
+    assert "Action plan hash changed since approval" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.3: Audit writes never fail silently
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_audit_write_coerces_non_uuid_incident_id():
+    """A non-UUID incident id must NOT silently drop the audit event (was the bug)."""
+    gw = MCPGateway()
+    db_session = MockDBAuditSession()
+
+    res = await gw.dispatch_tool_call(
+        agent_identity="execution-agent",
+        tool_name="scale_deployment",
+        params={"namespace": "staging", "deployment_name": "payment-service", "replicas": 3},
+        tenant_id=str(uuid.uuid4()),
+        incident_id="INC-not-a-uuid",  # non-UUID; previously threw & was swallowed
+        db_session=db_session,
+    )
+
+    assert res["status"] == "success"
+    assert len(db_session.events) == 1
+    event = db_session.events[0]
+    # The id was deterministically coerced to a real UUID rather than dropped.
+    assert isinstance(event.incident_id, uuid.UUID)
+
+
+@pytest.mark.anyio
+async def test_audit_write_failure_is_loud_not_silent():
+    """A genuine audit-write failure raises AuditWriteError instead of a swallowed warning."""
+
+    class FailingDBSession:
+        bind = None
+
+        def execute(self, stmt):
+            raise RuntimeError("simulated DB outage")
+
+        def add(self, entity):
+            pass
+
+        def commit(self):
+            pass
+
+    gw = MCPGateway()
+
+    with pytest.raises(AuditWriteError):
+        await gw.dispatch_tool_call(
+            agent_identity="execution-agent",
+            tool_name="scale_deployment",
+            params={"namespace": "staging", "deployment_name": "payment-service", "replicas": 3},
+            tenant_id=str(uuid.uuid4()),
+            incident_id=str(uuid.uuid4()),
+            db_session=FailingDBSession(),
+        )
 

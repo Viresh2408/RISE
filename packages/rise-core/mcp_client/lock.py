@@ -73,6 +73,32 @@ class ResourceLockManager:
         return lock_token
 
     @staticmethod
+    def get_lock_owner(
+        resource_id: str,
+        redis_client: Optional[Any] = None,
+    ) -> Optional[str]:
+        """Return the current lock owner/token for resource_id, or None if unlocked.
+
+        Non-destructive read used for defense-in-depth conflict checks (e.g. in the MCP
+        gateway) — it never acquires, releases, or mutates the lock.
+        """
+        lock_key = f"lock:resource:{resource_id}"
+
+        if redis_client is not None:
+            try:
+                val = redis_client.get(lock_key)
+                if val is None:
+                    return None
+                return val.decode() if isinstance(val, bytes) else str(val)
+            except Exception as exc:
+                logger.warning("Failed to read Redis lock owner (%s), using in-memory fallback", exc)
+
+        existing = _IN_MEMORY_LOCKS.get(resource_id)
+        if existing and existing["expires_at"] > time.time():
+            return existing["token"]
+        return None
+
+    @staticmethod
     def release_lock(
         resource_id: str,
         lock_token: str,

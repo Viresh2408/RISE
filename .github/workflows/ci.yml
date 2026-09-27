@@ -1,10 +1,56 @@
-# CI Workflow stub (lint, unit tests, build on every PR)
+# CI — runs the Python unit suite and the dashboard build/lint on every PR to main.
+# This gate is what makes the passing test suite actually block a merge.
 name: CI
+
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+
 jobs:
-  build:
+  python-tests:
+    name: Python unit tests (pytest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Run pytest (unit tests; integration deselected via addopts)
+        run: poetry run pytest -q
+
+  frontend-build:
+    name: Dashboard lint + build (pnpm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build dashboard
+        run: pnpm build

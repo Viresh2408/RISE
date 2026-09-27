@@ -1,0 +1,8 @@
+{
+  "run_id": "5338f19c",
+  "mode": "rca",
+  "label": "PILOT -- NOT RELEASE ELIGIBLE",
+  "live": false,
+  "status": "SKIPPED",
+  "reason": "--live not specified; live LLM credential required for real benchmark"
+}

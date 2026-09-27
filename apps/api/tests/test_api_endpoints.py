@@ -134,7 +134,24 @@ def test_approve_action_missing_idempotency_key():
     assert json_data["error"]["code"] == "VALIDATION_ERROR"
 
 
-def test_approve_action_success_with_idempotency_key():
+def test_approve_action_success_with_idempotency_key(monkeypatch):
+    # Hermetic fail-closed: stub the canonical GitHub path to its no-credentials result
+    # so the suite never writes to the live repo (a real GITHUB_TOKEN may be present in
+    # .env, and actions.py imports github_service lazily, re-running load_dotenv()).
+    # See ADR-004.
+    async def _commit_failclosed(incident_id, incident_title, target_file="packages/rise-core/db/session.py", branch=None):
+        return {
+            "success": False,
+            "error_code": "GITHUB_CREDENTIALS_UNAVAILABLE",
+            "error": "GitHub credentials unavailable; automated remediation fails closed and requires human review.",
+            "commit_sha": None, "commit_url": None, "branch": branch,
+            "file": target_file, "file_modified": target_file,
+            "pr_number": None, "pr_url": None,
+        }
+    monkeypatch.setattr(
+        "apps.api.src.services.github_service.commit_remediation_to_github",
+        _commit_failclosed,
+    )
     headers = {**APPROVER_HEADERS, "Idempotency-Key": "idempotency-uuid-12345"}
     response = client.post(
         "/api/v1/incidents/inc-001/actions/act-001/approve",
@@ -143,8 +160,10 @@ def test_approve_action_success_with_idempotency_key():
     )
     assert response.status_code == 200
     json_data = response.json()
-    assert json_data["data"]["status"] == "approved"
-    assert json_data["data"]["execution_status"] in ("queued", "executed")
+    # Fail-closed contract: MCP write mock is disabled outside dev, so create_pr is
+    # rejected and verification fails → requires_human / failed (not fabricated success).
+    assert json_data["data"]["status"] == "requires_human"
+    assert json_data["data"]["execution_status"] == "failed"
     assert json_data["error"] is None
 
 

@@ -57,7 +57,7 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
   const [redirectCountdown, setRedirectCountdown] = useState<number | null>(null);
 
   const handleApprove = async (note?: string) => {
-    const activeToken = session?.token || 'demo-token-hardcoded';
+    const activeToken = session?.token || '';
     setLoading(true);
     setErrorBanner(null);
 
@@ -263,30 +263,38 @@ export function ActionControls({ incidentId, action, recommendedPlan, onRefresh 
                 </div>
               </div>
 
-              <div className="rounded-lg bg-[#050B08] border border-[#22C55E]/20 p-3.5 font-mono text-xs space-y-2.5 text-[#E8E2D9]">
-                <div className="flex items-center justify-between text-[11px] text-[#6B6560]">
-                  <span className="flex items-center gap-1.5 text-[#4ADE80] font-semibold">
-                    <FileCode className="w-3.5 h-3.5" />
-                    {commitResult.file_modified || 'packages/rise-core/db/session.py'}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {commitResult.commit_timestamp ? new Date(commitResult.commit_timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}
-                  </span>
-                </div>
-                <div className="text-xs text-[#FAF7F2] font-semibold whitespace-pre-line leading-relaxed">
-                  {commitResult.commit_message || `fix(remediation): apply automated fix for incident ${incidentId.slice(0, 8)}`}
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-[#8B5CF6] pt-1 border-t border-[#22C55E]/10">
-                  <div className="flex items-center gap-2">
-                    <span>Commit SHA:</span>
-                    <code className="bg-[#8B5CF6]/15 px-2 py-0.5 rounded border border-[#8B5CF6]/30 font-mono text-[#D8B4FE]">
-                      {commitResult.commit_sha ? commitResult.commit_sha.slice(0, 10) : '101a1992ff'}
-                    </code>
+              {commitResult.commit_sha && (
+                <div className="rounded-lg bg-[#050B08] border border-[#22C55E]/20 p-3.5 font-mono text-xs space-y-2.5 text-[#E8E2D9]">
+                  <div className="flex items-center justify-between text-[11px] text-[#6B6560]">
+                    {commitResult.file_modified && (
+                      <span className="flex items-center gap-1.5 text-[#4ADE80] font-semibold">
+                        <FileCode className="w-3.5 h-3.5" />
+                        {commitResult.file_modified}
+                      </span>
+                    )}
+                    {commitResult.commit_timestamp && (
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {new Date(commitResult.commit_timestamp).toLocaleTimeString()}
+                      </span>
+                    )}
                   </div>
-                  <span className="text-[#22C55E] text-[10px] font-semibold">✓ Verified on Origin</span>
+                  {commitResult.commit_message && (
+                    <div className="text-xs text-[#FAF7F2] font-semibold whitespace-pre-line leading-relaxed">
+                      {commitResult.commit_message}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between text-[11px] text-[#8B5CF6] pt-1 border-t border-[#22C55E]/10">
+                    <div className="flex items-center gap-2">
+                      <span>Commit SHA:</span>
+                      <code className="bg-[#8B5CF6]/15 px-2 py-0.5 rounded border border-[#8B5CF6]/30 font-mono text-[#D8B4FE]">
+                        {commitResult.commit_sha.slice(0, 10)}
+                      </code>
+                    </div>
+                    <span className="text-[#22C55E] text-[10px] font-semibold">✓ Verified on Origin</span>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Navigation back to Incidents list */}
               <div className="flex items-center justify-between pt-2 border-t border-[#22C55E]/20">

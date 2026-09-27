@@ -104,4 +104,37 @@ describe('Dashboard & Action Approval Flow Unit Tests', () => {
 
     fetchSpy.mockRestore();
   });
+
+  it('surfaces a real error when the backend is unreachable — never fabricates success (plan 0.4/0.5)', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new TypeError('Failed to fetch'));
+
+    // approveAction must reject, not resolve with a fabricated commit_sha / "approved".
+    await expect(apiClient.approveAction('test-token', 'inc-100', 'act-001')).rejects.toThrow();
+
+    fetchSpy.mockRestore();
+  });
+
+  it('listIncidents propagates a backend outage instead of returning hardcoded demo incidents (plan 0.4/0.5)', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new TypeError('Failed to fetch'));
+
+    // No DEMO_INCIDENTS fallback: the error must reach the UI so it can render a
+    // real "cannot connect to API" state rather than fabricated fixtures.
+    await expect(apiClient.listIncidents('test-token')).rejects.toThrow();
+
+    fetchSpy.mockRestore();
+  });
+
+  it('getIncidentDetail propagates a backend outage instead of returning a fabricated incident (plan 0.4/0.5)', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(apiClient.getIncidentDetail('test-token', 'inc-100')).rejects.toThrow();
+
+    fetchSpy.mockRestore();
+  });
 });

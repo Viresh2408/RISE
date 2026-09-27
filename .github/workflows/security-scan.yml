@@ -1,10 +1,35 @@
-# Security Scan Workflow stub (Trivy + Semgrep on every PR)
+# Security Scan — Trivy (dependency/filesystem CVEs) + Semgrep (SAST) on every PR to main.
 name: Security Scan
+
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+
 jobs:
-  security:
+  trivy:
+    name: Trivy filesystem scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep (auto config, fail on findings)
+        run: semgrep scan --config auto --error --skip-unknown-extensions .

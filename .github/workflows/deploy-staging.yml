@@ -1,10 +1,44 @@
-# Deploy Staging Workflow stub
+# Deploy Staging — runs a build + test gate on merge to main.
+#
+# NOTE: the actual cluster rollout below is REFERENCE SCAFFOLDING, not a working deploy.
+# infra/k8s/helm currently ships values files only (no Chart.yaml / templates), and no
+# live staging cluster or kubeconfig is wired into this repo. See infra/README.md. The
+# gate job is real and useful; the deploy job is an explicit placeholder so this workflow
+# is honest about what it does rather than a checkout-only stub.
 name: Deploy Staging
+
 on:
   push:
     branches: [main]
+
 jobs:
-  deploy:
+  gate:
+    name: Pre-deploy gate (pytest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Run pytest
+        run: poetry run pytest -q
+
+  deploy:
+    name: Staging rollout (reference scaffolding)
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder deploy step
+        run: |
+          echo "Staging deploy is reference scaffolding — see infra/README.md."
+          echo "No live staging cluster or complete Helm chart (Chart.yaml/templates) is configured."
+          echo "This step is intentionally a no-op so the workflow honestly reflects project state."

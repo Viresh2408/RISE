@@ -85,7 +85,13 @@ class GatewayConfig(BaseModel):
 
         providers: list[ProviderConfig] = []
 
-        groq_key = os.environ.get("GROQ_API_KEY", "")
+        def _clean_env(var_name: str) -> str:
+            val = os.environ.get(var_name, "").strip()
+            if "#" in val:
+                val = val.split("#", 1)[0].strip()
+            return val
+
+        groq_key = _clean_env("GROQ_API_KEY")
         if groq_key:
             providers.append(
                 ProviderConfig(
@@ -98,7 +104,7 @@ class GatewayConfig(BaseModel):
                 )
             )
 
-        gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        gemini_key = _clean_env("GEMINI_API_KEY")
         if gemini_key:
             providers.append(
                 ProviderConfig(
@@ -111,7 +117,7 @@ class GatewayConfig(BaseModel):
                 )
             )
 
-        openai_key = os.environ.get("OPENAI_API_KEY", "")
+        openai_key = _clean_env("OPENAI_API_KEY")
         if openai_key:
             providers.append(
                 ProviderConfig(

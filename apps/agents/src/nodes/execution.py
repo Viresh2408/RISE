@@ -30,6 +30,32 @@ class ActionPlanChangedError(ValueError):
         super().__init__(message)
 
 
+class InvalidActionPlanError(TypeError):
+    """Raised when a raw plan cannot be coerced into an ActionPlan."""
+
+
+def coerce_action_plan(raw_plan: Any) -> ActionPlan:
+    """Normalize a raw plan (dict or ActionPlan) into an ActionPlan.
+
+    This is the single source of truth for turning a raw plan into the ActionPlan
+    that gets hashed and executed. Any caller that needs to compute the approved
+    plan hash *before* execution (e.g. the orchestrator's human-approval gate)
+    MUST use this helper so its anchor hash matches the hash ``run_execution_agent``
+    recomputes at execution time. In particular the ``plan_rationale`` default
+    injection below must be applied identically on both sides — otherwise the
+    canonical hashes diverge and a legitimate approved execution fails closed with
+    a spurious ACTION_PLAN_CHANGED.
+    """
+    if isinstance(raw_plan, ActionPlan):
+        return raw_plan
+    if isinstance(raw_plan, dict):
+        plan_dict = dict(raw_plan)
+        if not plan_dict.get("plan_rationale"):
+            plan_dict["plan_rationale"] = f"Remediate via {plan_dict.get('action_type', 'action')}"
+        return ActionPlan(**plan_dict)
+    raise InvalidActionPlanError(f"Invalid action_plan type: {type(raw_plan)}")
+
+
 async def run_execution_agent(
     state: Dict[str, Any],
     *,
@@ -53,21 +79,16 @@ async def run_execution_agent(
         new_state["execution_log"] = execution_log
         return new_state
 
-    # Parse ActionPlan model if needed
-    if isinstance(raw_plan, dict):
-        plan_dict = dict(raw_plan)
-        if not plan_dict.get("plan_rationale"):
-            plan_dict["plan_rationale"] = f"Remediate via {plan_dict.get('action_type', 'action')}"
-        action_plan = ActionPlan(**plan_dict)
-    elif isinstance(raw_plan, ActionPlan):
-        action_plan = raw_plan
-    else:
-        err_msg = f"Invalid action_plan type: {type(raw_plan)}"
+    # Parse ActionPlan model if needed (shared normalization — see coerce_action_plan
+    # so the executor and the approval gate hash the plan identically).
+    try:
+        action_plan = coerce_action_plan(raw_plan)
+    except InvalidActionPlanError as exc:
         execution_log = ExecutionLog(
             status="failed",
             steps_completed=0,
             steps_total=0,
-            error=err_msg,
+            error=str(exc),
         ).model_dump()
         new_state["execution_log"] = execution_log
         return new_state
@@ -75,6 +96,25 @@ async def run_execution_agent(
     # 1. Plan Hash Verification
     approved_hash = state.get("approved_plan_hash")
     current_hash = compute_action_plan_hash(action_plan)
+
+    # Fail closed when the caller marks this run as approval-bearing: an execution
+    # that is SUPPOSED to be anchored to a persisted human approval must not run
+    # un-anchored. This closes the "only enforced when a hash happens to be present"
+    # gap on the canonical approval path (ADR-005); default is off, so raw/staging
+    # harness callers that never had an anchor are unaffected.
+    if state.get("require_approved_hash") and not approved_hash:
+        err_msg = "Execution requires an approved plan hash anchor, but none was supplied"
+        logger.error(err_msg)
+        execution_log = ExecutionLog(
+            status="failed",
+            steps_completed=0,
+            steps_total=len(action_plan.action_steps),
+            error=err_msg,
+        ).model_dump()
+        new_state["execution_log"] = execution_log
+        new_state["error"] = err_msg
+        new_state["error_code"] = "ACTION_PLAN_CHANGED"
+        return new_state
 
     if approved_hash and approved_hash != current_hash:
         logger.error("Plan hash mismatch: approved=%s, current=%s", approved_hash, current_hash)
@@ -135,10 +175,13 @@ async def run_execution_agent(
                     tool_name=step.tool,
                     params=step.params,
                     approved_plan=action_plan,
+                    approved_plan_hash=approved_hash,
                     step_index=idx,
                     environment=environment,
                     tenant_id=tenant_id,
                     incident_id=incident_id,
+                    resource_id=resource_id,
+                    redis_client=redis_client,
                     db_session=db_session,
                 )
 

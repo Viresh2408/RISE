@@ -510,7 +510,7 @@ export default function IncidentDetailPage() {
   const [showGraphVisualizer, setShowGraphVisualizer] = useState(false);
 
   const fetchIncidentDetail = async (silent = false, signal?: AbortSignal) => {
-    const activeToken = session?.token || 'demo-token-hardcoded';
+    const activeToken = session?.token || '';
     if (!id) return;
     if (!silent) setLoading(true);
 
@@ -628,7 +628,7 @@ export default function IncidentDetailPage() {
 
   const handleDeleteIncident = async () => {
     if (!confirm('Are you sure you want to delete/dismiss this incident from the system?')) return;
-    const activeToken = session?.token || 'demo-token-hardcoded';
+    const activeToken = session?.token || '';
     try {
       await apiClient.deleteIncident(activeToken, id);
       window.location.href = '/incidents';
@@ -895,7 +895,7 @@ export default function IncidentDetailPage() {
             {/* 2b. GitHub Source Evidence Panel — only for monitor-detected incidents */}
             {decision?.recommended_action?.code_fix_snippet?.is_monitor_detected && (
               <GitHubSourceEvidencePanel
-                token={session?.token || 'demo-token-hardcoded'}
+                token={session?.token || ''}
                 filePath={decision.recommended_action.code_fix_snippet.file}
                 patternId={decision.recommended_action.code_fix_snippet.pattern_id}
                 buggyContext={decision.recommended_action.code_fix_snippet.buggy_context}

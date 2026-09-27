@@ -1,6 +1,11 @@
 """MCP AWS Server (`mcp-aws`).
 
 Exposes AWS CloudWatch, EC2, Lambda, and SSM tools per mcp.md §2.
+
+NOTE (project stage): this server is a SIMULATED facade. Handlers return deterministic
+fixture payloads and make no real AWS calls (boto3 is intentionally not a dependency).
+Wiring real AWS SDK calls is out of scope for this stage — see infra/README.md and the
+MCP architecture ADR.
 """
 
 from __future__ import annotations

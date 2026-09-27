@@ -184,7 +184,9 @@ def test_api_approve_simulated_security_action():
     assert response.status_code == 200
     data = response.json().get("data", {})
     assert data.get("status") == "approved"
-    assert data.get("execution_status") == "executed"
+    # Fail-closed contract: execution success is only reported after independent
+    # verification passes, so the terminal state is 'verified_success'.
+    assert data.get("execution_status") == "verified_success"
     assert data.get("is_simulated") is True
     assert data.get("action_type") == "block_ip_address"
 

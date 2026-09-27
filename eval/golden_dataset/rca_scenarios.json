@@ -1,0 +1,1809 @@
+[
+  {
+    "id": 1,
+    "title": "payment-service high error rate -- 503s spiking to 45%",
+    "service": "payment-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-08-04T11:58:00Z",
+          "event": "Deploy v2.4.1 to payment-service",
+          "source": "github-actions"
+        },
+        {
+          "timestamp": "2026-08-04T12:03:00Z",
+          "event": "Error rate crossed 20%",
+          "source": "alertmanager"
+        },
+        {
+          "timestamp": "2026-08-04T12:07:00Z",
+          "event": "Error rate at 45%, SLO breached",
+          "source": "alertmanager"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:payment-service",
+          "excerpt": "WARN [db-pool] acquire timeout after 5000ms -- all 20 connections in use"
+        },
+        {
+          "source": "loki:payment-service",
+          "excerpt": "ERROR connection pool exhausted; returning 503 to caller"
+        },
+        {
+          "source": "loki:payment-service",
+          "excerpt": "SLOW QUERY [180ms]: SELECT * FROM transactions WHERE status='pending' -- added in v2.4.1"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "http_error_rate_5xx",
+          "value": "45%",
+          "window": "5m"
+        },
+        {
+          "metric": "db_pool_wait_ms_p99",
+          "value": "4800ms",
+          "window": "5m"
+        },
+        {
+          "metric": "db_pool_active_connections",
+          "value": "20/20 (saturated)",
+          "window": "5m"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "payment-service",
+          "commit": "v2.4.1",
+          "deployed_at": "2026-08-04T11:58:00Z",
+          "author": "dev-alice",
+          "pr_title": "Add pending transaction query for reporting dashboard"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "database connection pool exhausted",
+      "provenance": "Slow unbounded query in v2.4.1 held connections beyond timeout, exhausting the pool of 20.",
+      "verified_by": "SRE postmortem PM-2026-08-04"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "connection pool",
+        "database"
+      ],
+      "causal_mechanisms": [
+        "exhausted",
+        "exhaustion",
+        "depleted",
+        "saturated"
+      ],
+      "causal_trigger": [
+        "slow query",
+        "v2.4.1",
+        "deploy"
+      ],
+      "hallucination_check": [
+        "network partition",
+        "OOM",
+        "memory leak",
+        "TLS"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 2,
+    "title": "payment-service memory leak causing OOM restarts",
+    "service": "payment-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-08-10T09:00:00Z",
+          "event": "Deploy v2.3.0 to payment-service",
+          "source": "github-actions"
+        },
+        {
+          "timestamp": "2026-08-10T11:30:00Z",
+          "event": "RSS growing -- memory alert firing",
+          "source": "alertmanager"
+        },
+        {
+          "timestamp": "2026-08-10T12:55:00Z",
+          "event": "OOMKilled -- container restarted",
+          "source": "k8s-events"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:payment-service",
+          "excerpt": "INFO [billing-middleware] Registered EventEmitter listener (total: 847 listeners)"
+        },
+        {
+          "source": "loki:payment-service",
+          "excerpt": "MaxListenersExceededWarning: 850+ listeners detected for request event"
+        },
+        {
+          "source": "k8s",
+          "excerpt": "OOMKilled reason=OOMKilled exitCode=137 container=payment-service"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "container_memory_rss_bytes",
+          "value": "increasing monotonically over 3h",
+          "window": "3h"
+        },
+        {
+          "metric": "container_restarts",
+          "value": "3 restarts in 6h",
+          "window": "6h"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "payment-service",
+          "commit": "v2.3.0",
+          "deployed_at": "2026-08-10T09:00:00Z",
+          "author": "dev-bob",
+          "pr_title": "Add billing audit middleware with per-request event hooks"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "listener leak / memory leak in billing middleware",
+      "provenance": "EventEmitter listeners registered per-request but never removed in billing middleware introduced in v2.3.0.",
+      "verified_by": "Heap dump analysis postmortem PM-2026-08-10"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "billing middleware",
+        "listener",
+        "EventEmitter"
+      ],
+      "causal_mechanisms": [
+        "leak",
+        "not removed",
+        "never removed",
+        "unbounded growth",
+        "accumulation"
+      ],
+      "causal_trigger": [
+        "v2.3.0",
+        "per-request",
+        "middleware"
+      ],
+      "hallucination_check": [
+        "network",
+        "database",
+        "connection pool",
+        "TLS"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 3,
+    "title": "auth-service JWT validation latency spike",
+    "service": "auth-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-08-15T14:00:00Z",
+          "event": "JWKS cache keys expired simultaneously",
+          "source": "auth-service-log"
+        },
+        {
+          "timestamp": "2026-08-15T14:00:01Z",
+          "event": "P99 latency jumped from 12ms to 890ms",
+          "source": "prometheus"
+        },
+        {
+          "timestamp": "2026-08-15T14:00:45Z",
+          "event": "JWKS cache refilled, latency recovered",
+          "source": "prometheus"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:auth-service",
+          "excerpt": "WARN [jwks-cache] Cache miss -- fetching remote JWKS from identity provider"
+        },
+        {
+          "source": "loki:auth-service",
+          "excerpt": "INFO [jwks-cache] 1843 concurrent goroutines waiting for JWKS refresh"
+        },
+        {
+          "source": "loki:auth-service",
+          "excerpt": "INFO [jwks-cache] JWKS refreshed in 820ms, unblocking waiters"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "jwt_validation_p99_ms",
+          "value": "890ms peak",
+          "window": "1m"
+        },
+        {
+          "metric": "jwks_cache_hit_rate",
+          "value": "0% for 45s",
+          "window": "1m"
+        },
+        {
+          "metric": "concurrent_jwks_refreshers",
+          "value": "1843",
+          "window": "30s"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "JWKS cache expiration thundering herd",
+      "provenance": "All cached JWKS keys expired at the same TTL, causing a thundering-herd of simultaneous refresh requests.",
+      "verified_by": "Auth-service SRE review 2026-08-15"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "JWKS",
+        "cache"
+      ],
+      "causal_mechanisms": [
+        "thundering herd",
+        "stampede",
+        "simultaneous expiration",
+        "concurrent refresh",
+        "cache miss storm"
+      ],
+      "causal_trigger": [
+        "TTL",
+        "expiration",
+        "expired"
+      ],
+      "hallucination_check": [
+        "deploy",
+        "certificate",
+        "memory",
+        "database"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 4,
+    "title": "auth-service complete outage -- misconfigured TLS cert",
+    "service": "auth-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-09-01T03:00:00Z",
+          "event": "Automated cert rotation ran",
+          "source": "cert-manager"
+        },
+        {
+          "timestamp": "2026-09-01T03:01:30Z",
+          "event": "auth-service pods failing readiness -- TLS handshake errors",
+          "source": "k8s-events"
+        },
+        {
+          "timestamp": "2026-09-01T03:01:45Z",
+          "event": "100% of auth-service requests failing",
+          "source": "alertmanager"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:auth-service",
+          "excerpt": "ERROR tls: no certificates configured for auth.internal.cluster.local"
+        },
+        {
+          "source": "loki:api-gateway",
+          "excerpt": "ERROR upstream TLS handshake failed: x509: certificate is not valid for auth.internal.cluster.local"
+        },
+        {
+          "source": "loki:cert-manager",
+          "excerpt": "INFO Certificate issued for auth-service.default.svc -- SANs: [auth-service.example.com]"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "auth_service_request_success_rate",
+          "value": "0%",
+          "window": "5m"
+        },
+        {
+          "metric": "tls_handshake_failures",
+          "value": "100%",
+          "window": "5m"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "cert-manager-config",
+          "commit": "rotate-cert-2026-09",
+          "deployed_at": "2026-09-01T03:00:00Z",
+          "author": "cert-rotation-bot",
+          "pr_title": "Scheduled TLS cert rotation for auth-service"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "missing SAN in rotated TLS certificate",
+      "provenance": "New cert issued with only the public SAN; internal cluster DNS name omitted from SubjectAltName list.",
+      "verified_by": "Postmortem PM-2026-09-01"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "certificate",
+        "SAN",
+        "SubjectAltName"
+      ],
+      "causal_mechanisms": [
+        "missing",
+        "not included",
+        "omitted",
+        "not valid for"
+      ],
+      "causal_trigger": [
+        "rotation",
+        "cert rotation",
+        "internal DNS",
+        "cluster DNS"
+      ],
+      "hallucination_check": [
+        "connection pool",
+        "memory",
+        "cache",
+        "query"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 5,
+    "title": "notification-service queue backlog -- emails delayed 2h",
+    "service": "notification-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-08-20T08:00:00Z",
+          "event": "Helm chart upgrade deployed",
+          "source": "github-actions"
+        },
+        {
+          "timestamp": "2026-08-20T08:05:00Z",
+          "event": "Email queue depth growing exponentially",
+          "source": "alertmanager"
+        },
+        {
+          "timestamp": "2026-08-20T10:10:00Z",
+          "event": "Queue depth 45000 -- 2h email delay",
+          "source": "alertmanager"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:notification-service",
+          "excerpt": "INFO [worker-pool] Starting 1 email worker (configured: 1)"
+        },
+        {
+          "source": "loki:notification-service",
+          "excerpt": "WARN [email-queue] Queue depth: 45000, active workers: 1, expected: 8"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "email_queue_depth",
+          "value": "45000",
+          "window": "5m"
+        },
+        {
+          "metric": "active_email_workers",
+          "value": "1",
+          "window": "5m"
+        },
+        {
+          "metric": "email_processing_rate_per_min",
+          "value": "12 (expected ~1000)",
+          "window": "5m"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "notification-service-helm",
+          "commit": "helm-upgrade-v3.2.0",
+          "deployed_at": "2026-08-20T08:00:00Z",
+          "author": "deploy-bot",
+          "pr_title": "Upgrade Helm chart to v3.2.0"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "notification worker count misconfiguration",
+      "provenance": "Helm chart upgrade accidentally reset worker replica count from 8 to 1.",
+      "verified_by": "Postmortem PM-2026-08-20"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "worker",
+        "worker count",
+        "replica"
+      ],
+      "causal_mechanisms": [
+        "misconfiguration",
+        "misconfigured",
+        "reduced",
+        "reset",
+        "wrong value",
+        "set to 1"
+      ],
+      "causal_trigger": [
+        "Helm",
+        "helm upgrade",
+        "chart upgrade"
+      ],
+      "hallucination_check": [
+        "memory",
+        "OOM",
+        "database",
+        "TLS",
+        "cache"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 6,
+    "title": "notification-service Slack webhook rate limit exceeded",
+    "service": "notification-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-09-05T16:00:00Z",
+          "event": "Alert storm: 2300 alerts fired in 10 minutes",
+          "source": "alertmanager"
+        },
+        {
+          "timestamp": "2026-09-05T16:03:00Z",
+          "event": "Slack webhook responses: HTTP 429 Too Many Requests",
+          "source": "loki:notification-service"
+        },
+        {
+          "timestamp": "2026-09-05T16:10:00Z",
+          "event": "All Slack notifications silently dropped",
+          "source": "loki:notification-service"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:notification-service",
+          "excerpt": "ERROR [slack-webhook] POST https://hooks.slack.com -- HTTP 429 Retry-After: 60"
+        },
+        {
+          "source": "loki:notification-service",
+          "excerpt": "WARN [slack-webhook] Rate limit hit -- no backoff configured, dropping message"
+        },
+        {
+          "source": "loki:notification-service",
+          "excerpt": "INFO Sent 2300 webhook POSTs in 600s to Slack"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "slack_webhook_http_429_count",
+          "value": "1847",
+          "window": "10m"
+        },
+        {
+          "metric": "slack_notifications_dropped",
+          "value": "1847",
+          "window": "10m"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "Slack API rate limiting under alert storm",
+      "provenance": "Notification service fired 2300 Slack webhooks without backoff; Slack rate-limited at 1 msg/s per channel.",
+      "verified_by": "Slack API audit 2026-09-05"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "Slack",
+        "webhook",
+        "rate limit"
+      ],
+      "causal_mechanisms": [
+        "rate limited",
+        "rate limiting",
+        "429",
+        "throttled",
+        "throttling"
+      ],
+      "causal_trigger": [
+        "alert storm",
+        "no backoff",
+        "backoff not configured",
+        "burst"
+      ],
+      "hallucination_check": [
+        "database",
+        "TLS",
+        "memory",
+        "connection pool"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 7,
+    "title": "api-gateway 502 cascade -- upstream connection refused",
+    "service": "api-gateway",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-08-25T10:00:00Z",
+          "event": "payment-service rollout started",
+          "source": "k8s-events"
+        },
+        {
+          "timestamp": "2026-08-25T10:02:00Z",
+          "event": "api-gateway 502 rate: 100%",
+          "source": "alertmanager"
+        },
+        {
+          "timestamp": "2026-08-25T10:02:10Z",
+          "event": "payment-service pods: 0 ready / 3 running",
+          "source": "k8s-events"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:api-gateway",
+          "excerpt": "ERROR upstream connect error before headers: payment-service -- connection refused"
+        },
+        {
+          "source": "k8s",
+          "excerpt": "Readiness probe failed: HTTP probe failed with statuscode: 404 -- path: /health"
+        },
+        {
+          "source": "k8s",
+          "excerpt": "Readiness probe path configured as /health; actual endpoint is /healthz"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "payment_service_ready_pods",
+          "value": "0",
+          "window": "5m"
+        },
+        {
+          "metric": "api_gateway_502_rate",
+          "value": "100%",
+          "window": "5m"
+        },
+        {
+          "metric": "readiness_probe_failure_count",
+          "value": "180",
+          "window": "3m"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "payment-service",
+          "commit": "rollout-v2.5.0",
+          "deployed_at": "2026-08-25T10:00:00Z",
+          "author": "deploy-bot",
+          "pr_title": "Rollout payment-service v2.5.0"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "readiness probe configuration mismatch",
+      "provenance": "Probe path /health; endpoint moved to /healthz in v2.5.0. All pods failed readiness, leaving 0 active endpoints.",
+      "verified_by": "K8s SRE review 2026-08-25"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "readiness probe",
+        "probe"
+      ],
+      "causal_mechanisms": [
+        "mismatch",
+        "misconfigured",
+        "wrong path",
+        "path mismatch",
+        "404"
+      ],
+      "causal_trigger": [
+        "rollout",
+        "deploy",
+        "/health",
+        "/healthz"
+      ],
+      "hallucination_check": [
+        "TLS",
+        "memory",
+        "connection pool",
+        "rate limit"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 8,
+    "title": "api-gateway TLS 1.0 deprecation breaking legacy clients",
+    "service": "api-gateway",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-09-10T00:00:00Z",
+          "event": "TLS 1.0/1.1 disabled on api-gateway",
+          "source": "change-management"
+        },
+        {
+          "timestamp": "2026-09-10T00:05:00Z",
+          "event": "B2B partner error alerts: SSL handshake failure",
+          "source": "alertmanager"
+        },
+        {
+          "timestamp": "2026-09-10T08:00:00Z",
+          "event": "3 enterprise B2B customers reporting complete API failure",
+          "source": "support-ticket"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:api-gateway",
+          "excerpt": "ERROR TLS handshake error from 203.0.113.45: tls: no supported versions satisfy minVersion"
+        },
+        {
+          "source": "loki:api-gateway",
+          "excerpt": "INFO TLS negotiation: client offered [TLSv1.0], server minimum is TLSv1.2 -- rejected"
+        },
+        {
+          "source": "support",
+          "excerpt": "Client system: Java 7 JRE, .NET Framework 4.5 -- both only support TLS 1.0"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "b2b_api_request_failure_rate",
+          "value": "100% for affected clients",
+          "window": "8h"
+        },
+        {
+          "metric": "tls10_connection_attempts_blocked",
+          "value": "4200",
+          "window": "8h"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "api-gateway-config",
+          "commit": "disable-tls10",
+          "deployed_at": "2026-09-10T00:00:00Z",
+          "author": "security-team",
+          "pr_title": "Enforce TLS 1.2+ minimum -- disable TLS 1.0 and 1.1"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "TLS 1.0 deprecation breaking legacy clients",
+      "provenance": "Enforcing TLS 1.2+ minimum broke Java 7 and .NET 4.5 B2B clients that only support TLS 1.0.",
+      "verified_by": "Security team postmortem 2026-09-10"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "TLS",
+        "TLS 1.0"
+      ],
+      "causal_mechanisms": [
+        "deprecation",
+        "deprecated",
+        "disabled",
+        "enforcement",
+        "minimum version"
+      ],
+      "causal_trigger": [
+        "legacy client",
+        "Java 7",
+        ".NET 4.5",
+        "B2B"
+      ],
+      "hallucination_check": [
+        "connection pool",
+        "memory",
+        "cache",
+        "worker",
+        "queue"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 9,
+    "title": "payment-service duplicate charge bug after retry storm",
+    "service": "payment-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-09-12T15:00:00Z",
+          "event": "Network instability: upstream payment processor latency 2-8s",
+          "source": "cloud-provider-status"
+        },
+        {
+          "timestamp": "2026-09-12T15:05:00Z",
+          "event": "Charge retry storm -- 1200 retries in 5 minutes",
+          "source": "loki:payment-service"
+        },
+        {
+          "timestamp": "2026-09-12T15:30:00Z",
+          "event": "340 duplicate charge reports from customers",
+          "source": "support-tickets"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:payment-service",
+          "excerpt": "WARN [idempotency] Key charge-req-a7f3c2 not found in Redis -- treating as new request"
+        },
+        {
+          "source": "loki:payment-service",
+          "excerpt": "INFO [idempotency] Key TTL set to 60s on charge creation"
+        },
+        {
+          "source": "loki:payment-service",
+          "excerpt": "ERROR [payment] Network timeout -- retrying charge charge-req-a7f3c2 (attempt 2)"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "idempotency_key_hit_rate",
+          "value": "0% during retry window",
+          "window": "30m"
+        },
+        {
+          "metric": "duplicate_charge_count",
+          "value": "340",
+          "window": "30m"
+        },
+        {
+          "metric": "redis_idempotency_key_ttl_seconds",
+          "value": "60",
+          "window": "current"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "idempotency key expiry too short",
+      "provenance": "Redis idempotency keys expired (60s TTL) before retries completed (up to 8s timeout x retries), causing duplicate charges.",
+      "verified_by": "Payment SRE postmortem PM-2026-09-12"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "idempotency key",
+        "idempotency"
+      ],
+      "causal_mechanisms": [
+        "expired",
+        "expiry",
+        "TTL too short",
+        "TTL",
+        "short TTL"
+      ],
+      "causal_trigger": [
+        "retry",
+        "network timeout",
+        "60s",
+        "Redis"
+      ],
+      "hallucination_check": [
+        "memory",
+        "OOM",
+        "TLS",
+        "connection pool",
+        "worker"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 10,
+    "title": "auth-service token refresh race condition causing logout loops",
+    "service": "auth-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-09-18T09:00:00Z",
+          "event": "Mobile app v4.2.0 released -- parallel refresh requests",
+          "source": "release-notes"
+        },
+        {
+          "timestamp": "2026-09-18T09:30:00Z",
+          "event": "Spike in 401 errors -- users reporting forced logouts",
+          "source": "alertmanager"
+        },
+        {
+          "timestamp": "2026-09-18T10:00:00Z",
+          "event": "5% of active mobile sessions affected",
+          "source": "alertmanager"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "loki:auth-service",
+          "excerpt": "INFO [token-refresh] Refresh token rt-abc123 validated -- issuing new tokens"
+        },
+        {
+          "source": "loki:auth-service",
+          "excerpt": "WARN [token-refresh] Refresh token rt-abc123 already rotated -- token invalid"
+        },
+        {
+          "source": "loki:auth-service",
+          "excerpt": "INFO [token-refresh] 2 concurrent refresh requests received for same session within 50ms"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "token_refresh_401_rate",
+          "value": "12% of refresh calls",
+          "window": "1h"
+        },
+        {
+          "metric": "concurrent_refresh_same_session",
+          "value": "8% of mobile sessions",
+          "window": "1h"
+        },
+        {
+          "metric": "forced_logout_count",
+          "value": "1420",
+          "window": "1h"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "mobile-app",
+          "commit": "v4.2.0",
+          "deployed_at": "2026-09-18T09:00:00Z",
+          "author": "mobile-team",
+          "pr_title": "Parallel API request optimization -- refresh token on every concurrent call"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "token refresh race condition causing invalidation",
+      "provenance": "Mobile v4.2.0 sends concurrent requests each triggering token refresh; server rotates on first, invalidates on second -- logout loop.",
+      "verified_by": "Auth SRE postmortem PM-2026-09-18"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "token refresh",
+        "refresh token"
+      ],
+      "causal_mechanisms": [
+        "race condition",
+        "race",
+        "concurrent",
+        "simultaneous",
+        "invalidated"
+      ],
+      "causal_trigger": [
+        "mobile",
+        "v4.2.0",
+        "parallel",
+        "concurrent requests"
+      ],
+      "hallucination_check": [
+        "database",
+        "connection pool",
+        "TLS",
+        "memory",
+        "cache miss"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 11,
+    "title": "search-service latency spike -- single pod CPU pegged",
+    "service": "search-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-03-04T09:12:00Z",
+          "event": "New 'advanced filter' search feature enabled via flag for 100% of traffic",
+          "source": "feature-flag-audit"
+        },
+        {
+          "timestamp": "2026-03-04T09:19:40Z",
+          "event": "search-service-7b9 CPU crosses 95% and stays pegged; other 4 pods normal",
+          "source": "prometheus-alert"
+        },
+        {
+          "timestamp": "2026-03-04T09:21:10Z",
+          "event": "p99 query latency 180ms -> 14s on affected pod; heap flat at 41%",
+          "source": "grafana"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "search-service-7b9",
+          "excerpt": "WARN parser: matching input against pattern took 11284ms (thread search-worker-3 stuck in java.util.regex.Pattern$Curly.match)"
+        },
+        {
+          "source": "search-service-7b9",
+          "excerpt": "DEBUG incoming query='(a+)+$' user_filter='name~=((x*)*)y' -- compiled to backtracking automaton, steps>2^31"
+        },
+        {
+          "source": "search-service-7b9",
+          "excerpt": "INFO GC minor 12ms, old-gen stable; no allocation pressure detected"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "cpu_usage_pct{pod=search-service-7b9}",
+          "value": "100",
+          "window": "9m"
+        },
+        {
+          "metric": "jvm_heap_used_pct{pod=search-service-7b9}",
+          "value": "41",
+          "window": "9m"
+        },
+        {
+          "metric": "threads_runnable_in_regex",
+          "value": "6",
+          "window": "1m"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "regex denial of service in the user query parser",
+      "provenance": "root-caused by on-call from thread dump showing catastrophic backtracking on a crafted filter expression",
+      "verified_by": "search platform team, incident SR-1181 postmortem"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "regex",
+        "query parser",
+        "pattern matcher"
+      ],
+      "causal_mechanisms": [
+        "backtracking",
+        "cpu pegged",
+        "cpu exhaustion",
+        "runaway matching"
+      ],
+      "causal_trigger": [
+        "crafted user filter",
+        "nested quantifier input",
+        "advanced filter feature"
+      ],
+      "hallucination_check": [
+        "memory leak",
+        "out of memory",
+        "deadlock",
+        "network saturation",
+        "gc pause"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 12,
+    "title": "inventory-service order failures during flash sale",
+    "service": "inventory-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-03-11T18:00:00Z",
+          "event": "Flash sale opens; write QPS to inventory 4x baseline",
+          "source": "traffic-manager"
+        },
+        {
+          "timestamp": "2026-03-11T18:03:22Z",
+          "event": "Spike in 500s on POST /reserve; 0.9% of reservations rolled back",
+          "source": "api-gateway"
+        },
+        {
+          "timestamp": "2026-03-11T18:04:05Z",
+          "event": "PagerDuty critical: inventory reservation error rate > 0.5%",
+          "source": "pagerduty"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "inventory-service",
+          "excerpt": "ERROR org.postgresql.util.PSQLException: ERROR: deadlock detected; Detail: Process 8841 waits for ShareLock on transaction 55210; Process 8839 waits for ShareLock on transaction 55214."
+        },
+        {
+          "source": "postgres-primary",
+          "excerpt": "DETAIL: Process 8841 holds lock on relation inventory_items row (sku=A), waiting for row (sku=B); Process 8839 holds row (sku=B), waiting for row (sku=A)."
+        },
+        {
+          "source": "inventory-service",
+          "excerpt": "INFO bulk reserve tx updates rows in the order they arrive in the cart payload"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "pg_deadlocks_total",
+          "value": "37",
+          "window": "5m"
+        },
+        {
+          "metric": "reserve_rollback_ratio",
+          "value": "0.009",
+          "window": "5m"
+        },
+        {
+          "metric": "db_connections_in_use",
+          "value": "22/100",
+          "window": "5m"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "inventory-service",
+          "commit": "c41a7de",
+          "deployed_at": "2026-03-10T22:14:00Z",
+          "author": "dev-team",
+          "pr_title": "batch multi-SKU reservations into one transaction"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "inconsistent row lock acquisition order in the multi-SKU reservation transaction",
+      "provenance": "confirmed from postgres deadlock detail showing two transactions locking the same rows in opposite order under concurrency",
+      "verified_by": "inventory team, incident INV-903 review"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "row lock",
+        "reservation transaction",
+        "postgres",
+        "inventory_items"
+      ],
+      "causal_mechanisms": [
+        "deadlock",
+        "lock ordering",
+        "circular wait",
+        "lock contention"
+      ],
+      "causal_trigger": [
+        "concurrent multi-sku reservations",
+        "flash sale write spike",
+        "batch reservation deploy"
+      ],
+      "hallucination_check": [
+        "connection pool exhausted",
+        "out of memory",
+        "network partition",
+        "disk full",
+        "cpu"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 13,
+    "title": "billing-service checkout latency and thread starvation",
+    "service": "billing-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-02-19T13:40:00Z",
+          "event": "External status page reports elevated latency at payment provider",
+          "source": "vendor-status-webhook"
+        },
+        {
+          "timestamp": "2026-02-19T13:47:30Z",
+          "event": "billing-service worker pool saturated; queued requests climbing",
+          "source": "grafana"
+        },
+        {
+          "timestamp": "2026-02-19T13:49:00Z",
+          "event": "Checkout p95 320ms -> 9.8s; no billing-service deploy in last 14 days",
+          "source": "deploy-tracker"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "billing-service",
+          "excerpt": "WARN http-client: call to https://api.stripe.com/v1/charges exceeded 8000ms socket read; 47 worker threads BLOCKED on this call"
+        },
+        {
+          "source": "billing-service",
+          "excerpt": "ERROR java.net.SocketTimeoutException: Read timed out (no breaker in chain, request forwarded to caller after full wait)"
+        },
+        {
+          "source": "billing-service",
+          "excerpt": "INFO outbound charge attempts have no bounded retry budget or fast-fail path configured"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "upstream_latency_ms{host=api.stripe.com}",
+          "value": "8600",
+          "window": "6m"
+        },
+        {
+          "metric": "worker_threads_blocked",
+          "value": "47/50",
+          "window": "1m"
+        },
+        {
+          "metric": "billing_db_query_ms_p95",
+          "value": "12",
+          "window": "6m"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "unbounded blocking on a slow payment-provider dependency with no circuit breaker or fallback",
+      "provenance": "traced to worker threads pinned on synchronous provider calls during vendor-side latency; database was healthy throughout",
+      "verified_by": "payments reliability team, incident BILL-455"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "payment provider",
+        "http client",
+        "worker pool",
+        "upstream dependency"
+      ],
+      "causal_mechanisms": [
+        "threads blocked",
+        "thread starvation",
+        "blocking",
+        "no circuit breaker",
+        "no fallback"
+      ],
+      "causal_trigger": [
+        "provider latency spike",
+        "upstream degradation"
+      ],
+      "hallucination_check": [
+        "database slow",
+        "out of memory",
+        "deadlock",
+        "dns failure",
+        "code regression from deploy"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 14,
+    "title": "order-service event processing stalled",
+    "service": "order-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-01-27T07:05:00Z",
+          "event": "Downstream fulfillment stops receiving order events; consumer lag begins climbing linearly",
+          "source": "kafka-lag-exporter"
+        },
+        {
+          "timestamp": "2026-01-27T07:11:00Z",
+          "event": "Consumer group order-svc re-reads same offset repeatedly; no commit advance for 6 min",
+          "source": "grafana"
+        },
+        {
+          "timestamp": "2026-01-27T07:12:30Z",
+          "event": "Broker cluster healthy; all partitions have live leaders; no rebalance events",
+          "source": "kafka-admin"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "order-service",
+          "excerpt": "ERROR failed to deserialize record at partition orders-3 offset 88123: unexpected schema id 0x91, expected orders.v2; will retry"
+        },
+        {
+          "source": "order-service",
+          "excerpt": "WARN consumer stuck: offset 88123 attempted 214 times, exception rethrown, offset NOT committed, loop re-polls same record"
+        },
+        {
+          "source": "order-service",
+          "excerpt": "INFO all other partitions idle because single-threaded handler blocks on the failing record"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "kafka_consumer_lag{group=order-svc}",
+          "value": "41200",
+          "window": "7m"
+        },
+        {
+          "metric": "committed_offset_delta{partition=orders-3}",
+          "value": "0",
+          "window": "6m"
+        },
+        {
+          "metric": "broker_under_replicated_partitions",
+          "value": "0",
+          "window": "7m"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "checkout-service",
+          "commit": "9de11a2",
+          "deployed_at": "2026-01-27T07:02:00Z",
+          "author": "checkout-team",
+          "pr_title": "start emitting orders.v3 envelope (new schema id)"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "a poison-pill message the consumer cannot deserialize, trapping it in an infinite non-committing retry loop",
+      "provenance": "root-caused to an upstream schema change producing records the order consumer rejects, blocking the whole partition at one offset",
+      "verified_by": "order platform team, incident ORD-2210"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "kafka consumer",
+        "consumer group",
+        "orders partition",
+        "offset"
+      ],
+      "causal_mechanisms": [
+        "deserialization failure",
+        "retry loop",
+        "consumer stuck",
+        "offset not committed"
+      ],
+      "causal_trigger": [
+        "upstream schema change",
+        "malformed record",
+        "unexpected schema id"
+      ],
+      "hallucination_check": [
+        "broker down",
+        "disk full",
+        "network partition",
+        "rebalance storm",
+        "consumer scaled down"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 15,
+    "title": "recommendation-service cache writes failing at peak",
+    "service": "recommendation-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-02-02T20:00:00Z",
+          "event": "Evening peak; recommendation cache working set grows past provisioned memory",
+          "source": "grafana"
+        },
+        {
+          "timestamp": "2026-02-02T20:06:10Z",
+          "event": "Cache SET operations start erroring; read hit ratio collapses as new entries cannot be stored",
+          "source": "redis-exporter"
+        },
+        {
+          "timestamp": "2026-02-02T20:07:00Z",
+          "event": "recommendation latency 45ms -> 900ms as service falls back to recomputing everything",
+          "source": "grafana"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "recommendation-service",
+          "excerpt": "ERROR redis: OOM command not allowed when used memory > 'maxmemory' (SET rec:user:8813)"
+        },
+        {
+          "source": "redis-config-snapshot",
+          "excerpt": "used_memory=4.00G maxmemory=4.00G maxmemory-policy=noeviction keyspace_misses spiking"
+        },
+        {
+          "source": "recommendation-service",
+          "excerpt": "WARN cache write rejected; falling back to synchronous recompute for every request"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "redis_used_memory_bytes / redis_maxmemory_bytes",
+          "value": "1.00",
+          "window": "8m"
+        },
+        {
+          "metric": "redis_rejected_writes_total",
+          "value": "9021",
+          "window": "8m"
+        },
+        {
+          "metric": "redis_evicted_keys_total",
+          "value": "0",
+          "window": "8m"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "the Redis instance is configured to reject writes instead of evicting keys once memory is full",
+      "provenance": "confirmed from the OOM-on-write errors combined with a memory policy that never evicts, so a full cache stops accepting new entries",
+      "verified_by": "recommendations team, incident REC-771"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "redis",
+        "cache",
+        "maxmemory-policy"
+      ],
+      "causal_mechanisms": [
+        "noeviction",
+        "rejects writes",
+        "oom on write",
+        "no keys evicted"
+      ],
+      "causal_trigger": [
+        "peak working set exceeds maxmemory",
+        "memory limit reached"
+      ],
+      "hallucination_check": [
+        "application memory leak",
+        "network",
+        "disk full",
+        "cpu saturation",
+        "redis crashed"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 16,
+    "title": "user-service intermittent internal lookup failures",
+    "service": "user-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-03-18T15:22:00Z",
+          "event": "Node ip-10-2-3-44 reports MemoryPressure; kubelet begins evicting low-priority pods",
+          "source": "k8s-events"
+        },
+        {
+          "timestamp": "2026-03-18T15:23:10Z",
+          "event": "user-service starts logging sporadic failures resolving internal service hostnames",
+          "source": "grafana"
+        },
+        {
+          "timestamp": "2026-03-18T15:24:00Z",
+          "event": "Error rate to user-db and auth-service intermittent (~8%); healthy pods co-scheduled on the affected node",
+          "source": "prometheus"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "kube-system events",
+          "excerpt": "Evicted: coredns-5d8f-abc pod evicted due to node MemoryPressure; only 1 DNS replica remained schedulable"
+        },
+        {
+          "source": "user-service",
+          "excerpt": "ERROR dial tcp: lookup user-db.prod.svc.cluster.local on 10.96.0.10:53: read udp i/o timeout"
+        },
+        {
+          "source": "user-service",
+          "excerpt": "WARN retry succeeded on 2nd attempt; failures correlate with in-cluster name resolution, not the databases themselves"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "coredns_ready_replicas",
+          "value": "1/2",
+          "window": "5m"
+        },
+        {
+          "metric": "dns_query_timeout_ratio",
+          "value": "0.08",
+          "window": "5m"
+        },
+        {
+          "metric": "user_db_up",
+          "value": "1",
+          "window": "5m"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "cluster DNS pods were evicted under node memory pressure, causing intermittent name-resolution timeouts",
+      "provenance": "correlated the eviction events for the in-cluster DNS deployment with the lookup timeouts; backend databases were healthy the whole time",
+      "verified_by": "platform SRE, incident USR-1490"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "coredns",
+        "cluster dns",
+        "name resolution"
+      ],
+      "causal_mechanisms": [
+        "pod eviction",
+        "evicted",
+        "lookup timeout",
+        "resolution failure"
+      ],
+      "causal_trigger": [
+        "node memory pressure",
+        "dns replica loss"
+      ],
+      "hallucination_check": [
+        "database down",
+        "application bug",
+        "tls handshake",
+        "code deploy",
+        "connection pool"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 17,
+    "title": "metrics-service ingestion stopped accepting samples",
+    "service": "metrics-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-01-14T02:10:00Z",
+          "event": "New high-cardinality label rolled out on request metrics; series count doubles overnight",
+          "source": "config-audit"
+        },
+        {
+          "timestamp": "2026-01-14T05:41:00Z",
+          "event": "Prometheus data volume approaches full; sample appends begin failing",
+          "source": "prometheus-self-monitor"
+        },
+        {
+          "timestamp": "2026-01-14T05:44:00Z",
+          "event": "Dashboards go blank; no new samples stored; query path still serves old blocks",
+          "source": "grafana"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "prometheus",
+          "excerpt": "ERROR write-ahead log: write /prometheus/wal/00004821: no space left on device"
+        },
+        {
+          "source": "prometheus",
+          "excerpt": "WARN compaction skipped; head block cannot be truncated; volume /prometheus at 99% (retention window not enforced against volume size)"
+        },
+        {
+          "source": "node-exporter",
+          "excerpt": "filesystem /prometheus size=200Gi used=198Gi avail=2Gi"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "prometheus_tsdb_wal_disk_usage_pct",
+          "value": "99",
+          "window": "10m"
+        },
+        {
+          "metric": "prometheus_tsdb_head_series",
+          "value": "9100000",
+          "window": "10m"
+        },
+        {
+          "metric": "node_cpu_utilization{prometheus}",
+          "value": "0.22",
+          "window": "10m"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "the Prometheus data volume filled up because retention did not bound on-disk size against a cardinality surge",
+      "provenance": "root-caused to WAL append failures on a full volume driven by a high-cardinality label explosion; CPU and memory were fine",
+      "verified_by": "observability team, incident MET-388"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "prometheus",
+        "wal",
+        "data volume",
+        "tsdb"
+      ],
+      "causal_mechanisms": [
+        "no space left",
+        "disk full",
+        "retention not enforced",
+        "cannot truncate"
+      ],
+      "causal_trigger": [
+        "high cardinality label",
+        "series explosion"
+      ],
+      "hallucination_check": [
+        "out of memory",
+        "cpu saturation",
+        "network",
+        "query overload",
+        "process crash"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 18,
+    "title": "content-service serving stale pages after publish",
+    "service": "content-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-02-25T11:00:00Z",
+          "event": "Security change tightens the storage bucket permissions in prod",
+          "source": "cloudtrail"
+        },
+        {
+          "timestamp": "2026-02-25T11:30:00Z",
+          "event": "Editors publish updates; readers keep seeing the old version at the edge",
+          "source": "support-tickets"
+        },
+        {
+          "timestamp": "2026-02-25T11:38:00Z",
+          "event": "CDN cache-invalidation jobs report failures; origin fetches denied",
+          "source": "cdn-console"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "content-service",
+          "excerpt": "ERROR CloudFront createInvalidation ok, but origin revalidation returns 403 AccessDenied from origin bucket"
+        },
+        {
+          "source": "s3-access-logs",
+          "excerpt": "REST.GET.OBJECT content/home.html 403 AccessDenied requester=cloudfront OAC arn:...:distribution/E12; principal not permitted by bucket policy"
+        },
+        {
+          "source": "content-service",
+          "excerpt": "INFO edge continues serving last-good cached object because it cannot revalidate against origin"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "cdn_origin_403_ratio",
+          "value": "1.0",
+          "window": "8m"
+        },
+        {
+          "metric": "stale_hit_ratio",
+          "value": "0.97",
+          "window": "8m"
+        },
+        {
+          "metric": "origin_5xx_ratio",
+          "value": "0.0",
+          "window": "8m"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "infra-security",
+          "commit": "77bc0e1",
+          "deployed_at": "2026-02-25T11:00:00Z",
+          "author": "sec-team",
+          "pr_title": "restrict prod content bucket to explicit principals"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "a tightened storage-bucket permission stopped the CDN from reading the origin, so purges could not revalidate and stale content persisted",
+      "provenance": "correlated the bucket-permission change with origin 403s to the CDN identity; the application and origin objects were otherwise healthy",
+      "verified_by": "content platform team, incident CON-604"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "bucket policy",
+        "cloudfront",
+        "cdn",
+        "origin access"
+      ],
+      "causal_mechanisms": [
+        "access denied",
+        "403",
+        "denied revalidation",
+        "stale cache"
+      ],
+      "causal_trigger": [
+        "bucket permission change",
+        "origin identity not permitted"
+      ],
+      "hallucination_check": [
+        "dns",
+        "origin down",
+        "tls",
+        "application code bug",
+        "out of memory"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 19,
+    "title": "ingress rejecting file uploads",
+    "service": "ingress-gateway",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-03-01T10:15:00Z",
+          "event": "New document-upload feature ships to users; average upload size ~3MB",
+          "source": "product-release"
+        },
+        {
+          "timestamp": "2026-03-01T10:18:00Z",
+          "event": "Upload endpoint returns errors for larger files while small uploads succeed",
+          "source": "grafana"
+        },
+        {
+          "timestamp": "2026-03-01T10:20:00Z",
+          "event": "Backend upload handler never receives the request; rejection happens at the edge proxy",
+          "source": "trace-view"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "nginx-ingress",
+          "excerpt": "2026/03/01 10:18:42 [error] client intended to send too large body: 3145728 bytes, returning 413 Request Entity Too Large"
+        },
+        {
+          "source": "ingress-config-snapshot",
+          "excerpt": "annotations: (no nginx.ingress.kubernetes.io/proxy-body-size set) -> client_max_body_size defaulting to 1m"
+        },
+        {
+          "source": "upload-service",
+          "excerpt": "INFO 0 requests reached the handler for files > 1MB; access log shows no matching upstream entry"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "ingress_http_413_total",
+          "value": "1544",
+          "window": "5m"
+        },
+        {
+          "metric": "upload_success_ratio{size>1mb}",
+          "value": "0.0",
+          "window": "5m"
+        },
+        {
+          "metric": "upstream_upload_handler_5xx",
+          "value": "0",
+          "window": "5m"
+        }
+      ],
+      "recent_deploys": []
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "the ingress proxy body-size limit is smaller than the files users upload, so large requests are rejected before reaching the backend",
+      "provenance": "root-caused to a default 1MB proxy body limit against multi-MB uploads, producing 413s at the edge with no backend involvement",
+      "verified_by": "platform networking team, incident ING-233"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "nginx ingress",
+        "proxy body size",
+        "client_max_body_size"
+      ],
+      "causal_mechanisms": [
+        "413",
+        "too large body",
+        "rejected at edge",
+        "limit too small"
+      ],
+      "causal_trigger": [
+        "multi-mb file upload",
+        "default 1mb limit"
+      ],
+      "hallucination_check": [
+        "backend down",
+        "upstream timeout",
+        "auth failure",
+        "out of memory",
+        "tls"
+      ]
+    },
+    "peer_reviewed": false
+  },
+  {
+    "id": 20,
+    "title": "analytics-service query timeouts during business hours",
+    "service": "analytics-service",
+    "raw_evidence": {
+      "timeline": [
+        {
+          "timestamp": "2026-02-11T14:00:00Z",
+          "event": "A schema migration is started against the reporting database during peak reporting load",
+          "source": "migration-runner"
+        },
+        {
+          "timestamp": "2026-02-11T14:00:20Z",
+          "event": "Read queries begin queueing; nothing is being deleted, but everything waits",
+          "source": "grafana"
+        },
+        {
+          "timestamp": "2026-02-11T14:01:30Z",
+          "event": "PagerDuty critical: analytics query p99 > 30s; queries pile up behind a single blocked statement",
+          "source": "pagerduty"
+        }
+      ],
+      "log_excerpts": [
+        {
+          "source": "postgres-reporting",
+          "excerpt": "LOG: process 4471 still waiting for AccessExclusiveLock on relation events_fact after 30012.114 ms"
+        },
+        {
+          "source": "postgres-reporting",
+          "excerpt": "STATEMENT: ALTER TABLE events_fact ADD COLUMN campaign_id bigint; -- holds the table, blocks all readers"
+        },
+        {
+          "source": "analytics-service",
+          "excerpt": "WARN 100% of SELECTs on events_fact blocked; connections healthy, CPU low, they are simply queued behind the ALTER"
+        }
+      ],
+      "metric_snapshots": [
+        {
+          "metric": "pg_blocked_queries{relation=events_fact}",
+          "value": "212",
+          "window": "3m"
+        },
+        {
+          "metric": "pg_lock_wait_seconds_max",
+          "value": "31",
+          "window": "3m"
+        },
+        {
+          "metric": "reporting_db_cpu_pct",
+          "value": "18",
+          "window": "3m"
+        }
+      ],
+      "recent_deploys": [
+        {
+          "repo": "analytics-migrations",
+          "commit": "a0f9b12",
+          "deployed_at": "2026-02-11T14:00:00Z",
+          "author": "data-eng",
+          "pr_title": "add campaign_id column to events_fact"
+        }
+      ]
+    },
+    "answer_key": {
+      "ground_truth_root_cause": "a schema migration took a table-wide exclusive lock during peak traffic, blocking all reads on the reporting table",
+      "provenance": "root-caused to an ALTER holding an AccessExclusiveLock while readers queued behind it; there was no deadlock and resources were idle",
+      "verified_by": "data engineering team, incident ANA-980"
+    },
+    "mechanism_rubric": {
+      "primary_components": [
+        "schema migration",
+        "alter table",
+        "access exclusive lock",
+        "events_fact"
+      ],
+      "causal_mechanisms": [
+        "exclusive lock",
+        "blocks all readers",
+        "lock wait",
+        "queries queued"
+      ],
+      "causal_trigger": [
+        "migration during peak",
+        "ddl on hot table"
+      ],
+      "hallucination_check": [
+        "deadlock",
+        "connection pool exhausted",
+        "out of memory",
+        "network",
+        "cpu saturation"
+      ]
+    },
+    "peer_reviewed": false
+  }
+]

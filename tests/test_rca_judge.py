@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import pytest
 
@@ -19,10 +20,13 @@ from eval.rca_judge import (
     BENCHMARK_LABEL,
     BENCHMARK_N,
     RELEASE_GATE_N,
+    RELEASE_GATE_ACCURACY_PCT,
     GOLDEN_SCENARIOS,
     LLMJudgeVerdict,
     _dataset_hash,
+    _evaluate_release_gate,
     _flatten_raw_evidence,
+    _peer_reviewed_count,
     _run_llm_judge,
     _score_grounding,
     _score_mechanism,
@@ -33,9 +37,14 @@ from eval.rca_judge import (
 )
 
 
+def _norm(text: str) -> str:
+    """Lowercase + collapse whitespace, for robust verbatim-leak comparison."""
+    return re.sub(r"\s+", " ", text.lower()).strip()
+
+
 def test_golden_scenarios_schema_and_isolation():
-    """Verify all 10 golden scenarios have proper schema and answer_key isolation."""
-    assert len(GOLDEN_SCENARIOS) == BENCHMARK_N == 10
+    """Verify all 20 golden scenarios have proper schema and answer_key isolation."""
+    assert len(GOLDEN_SCENARIOS) == BENCHMARK_N == 20
 
     for scenario in GOLDEN_SCENARIOS:
         # Required top-level fields
@@ -56,11 +65,17 @@ def test_golden_scenarios_schema_and_isolation():
         assert "provenance" in ans
         assert "verified_by" in ans
 
-        # Ground truth isolation: answer_key must not be in raw_evidence keys or values
-        gt = ans["ground_truth_root_cause"].lower()
-        raw_json = json.dumps(raw).lower()
-        # Ensure exact ground truth text is not in raw logs/timeline verbatim
-        assert gt not in raw_json, f"Scenario {scenario['id']} leaks exact ground truth into raw_evidence!"
+        # Ground truth isolation: NO answer_key string field may appear verbatim
+        # in raw_evidence (whitespace-normalised, case-insensitive).  This covers
+        # provenance and verified_by too, not just the graded root cause -- any of
+        # them naming the answer would make the benchmark trivial.
+        raw_norm = _norm(json.dumps(raw))
+        for field_name, value in ans.items():
+            if isinstance(value, str) and _norm(value):
+                assert _norm(value) not in raw_norm, (
+                    f"Scenario {scenario['id']} leaks answer_key['{field_name}'] "
+                    f"verbatim into raw_evidence!"
+                )
 
         rubric = scenario["mechanism_rubric"]
         assert "primary_components" in rubric and len(rubric["primary_components"]) > 0
@@ -71,9 +86,61 @@ def test_golden_scenarios_schema_and_isolation():
 def test_benchmark_constants_and_labeling():
     """Verify pilot labeling and release gate thresholds."""
     assert BENCHMARK_LABEL == "PILOT -- NOT RELEASE ELIGIBLE"
-    assert BENCHMARK_N == 10
+    assert BENCHMARK_N == 20
     assert RELEASE_GATE_N == 50
     assert BENCHMARK_N < RELEASE_GATE_N
+    assert RELEASE_GATE_ACCURACY_PCT == 80.0
+
+
+def test_pilot_corpus_is_not_peer_reviewed():
+    """Integrity: the shipped pilot scenarios are machine-authored and MUST NOT
+    claim human peer review.  This is the guard that stops release eligibility
+    from being inflated simply by generating more data."""
+    assert _peer_reviewed_count(GOLDEN_SCENARIOS) == 0
+    for scenario in GOLDEN_SCENARIOS:
+        # Absent or explicitly false -- never true.
+        assert scenario.get("peer_reviewed", False) is False
+
+
+def test_release_gate_requires_all_three_conditions():
+    """Release eligibility requires n>=gate AND accuracy>=floor AND every case
+    human peer-reviewed.  Dropping any one condition makes the run ineligible
+    and names the unmet reason."""
+    eligible, reasons = _evaluate_release_gate(
+        total=RELEASE_GATE_N, mechanism_accuracy_pct=100.0, peer_reviewed=RELEASE_GATE_N
+    )
+    assert eligible is True
+    assert reasons == []
+
+    # Too few cases.
+    elig_n, reasons_n = _evaluate_release_gate(
+        total=RELEASE_GATE_N - 1, mechanism_accuracy_pct=100.0, peer_reviewed=RELEASE_GATE_N - 1
+    )
+    assert elig_n is False and any("release gate" in r for r in reasons_n)
+
+    # Accuracy below floor.
+    elig_a, reasons_a = _evaluate_release_gate(
+        total=RELEASE_GATE_N, mechanism_accuracy_pct=79.9, peer_reviewed=RELEASE_GATE_N
+    )
+    assert elig_a is False and any("accuracy" in r for r in reasons_a)
+
+    # Not fully peer-reviewed (machine-authored padding cannot pass the gate).
+    elig_p, reasons_p = _evaluate_release_gate(
+        total=RELEASE_GATE_N, mechanism_accuracy_pct=100.0, peer_reviewed=RELEASE_GATE_N - 1
+    )
+    assert elig_p is False and any("peer-reviewed" in r for r in reasons_p)
+
+
+def test_release_gate_false_at_pilot_scale_even_at_perfect_accuracy():
+    """The current corpus can never be release eligible: too small AND not
+    peer-reviewed, regardless of a perfect score."""
+    eligible, reasons = _evaluate_release_gate(
+        total=len(GOLDEN_SCENARIOS),
+        mechanism_accuracy_pct=100.0,
+        peer_reviewed=_peer_reviewed_count(GOLDEN_SCENARIOS),
+    )
+    assert eligible is False
+    assert len(reasons) >= 2  # both n and peer-review conditions unmet
 
 
 def test_dataset_hash_is_deterministic():
@@ -420,6 +487,13 @@ def test_run_benchmark_live_happy_path_populates_scoring_metrics(monkeypatch):
     assert data["total_output_tokens"] == 50 * BENCHMARK_N
     assert data["total_cost_usd"] == pytest.approx(0.001 * BENCHMARK_N)
     assert data["release_eligible"] is False
+    # Honest gate: even a perfect pilot score is ineligible -- too few cases and
+    # no human peer review -- and the report states exactly why.
+    assert data["peer_reviewed_count"] == 0
+    assert data["release_gate_accuracy_pct"] == 80.0
+    reasons = data["release_gate_reasons"]
+    assert any("release gate" in r for r in reasons)
+    assert any("peer-reviewed" in r for r in reasons)
     for s in data["scores"]:
         assert s["llm_calls"] == 1
         assert len(s["prompt_hashes"]) == 1

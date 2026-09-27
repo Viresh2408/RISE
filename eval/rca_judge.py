@@ -102,8 +102,12 @@ logger = logging.getLogger("rca_judge")
 # BENCHMARK CONSTANTS
 # ---------------------------------------------------------------------------
 BENCHMARK_LABEL = "PILOT -- NOT RELEASE ELIGIBLE"
-BENCHMARK_N = 10
 RELEASE_GATE_N = 50
+# Strict-mechanism-accuracy floor the release gate requires (docs/evaluation-methodology.md §2).
+RELEASE_GATE_ACCURACY_PCT = 80.0
+# BENCHMARK_N is derived from the loaded golden dataset (see _load_golden_scenarios
+# below), so growing the corpus toward the release gate never requires editing a
+# hardcoded count.
 
 # ---------------------------------------------------------------------------
 # GOLDEN SCENARIOS (n=10, frozen)
@@ -115,616 +119,106 @@ RELEASE_GATE_N = 50
 # mechanism_rubric -- deterministic evaluation rules. ALL primary_components
 #                  must appear in model output, plus at least one causal_mechanism.
 # ---------------------------------------------------------------------------
-GOLDEN_SCENARIOS: List[Dict[str, Any]] = [
-    {
-        "id": 1,
-        "title": "payment-service high error rate -- 503s spiking to 45%",
-        "service": "payment-service",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-08-04T11:58:00Z",
-                    "event": "Deploy v2.4.1 to payment-service",
-                    "source": "github-actions",
-                },
-                {
-                    "timestamp": "2026-08-04T12:03:00Z",
-                    "event": "Error rate crossed 20%",
-                    "source": "alertmanager",
-                },
-                {
-                    "timestamp": "2026-08-04T12:07:00Z",
-                    "event": "Error rate at 45%, SLO breached",
-                    "source": "alertmanager",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:payment-service",
-                    "excerpt": "WARN [db-pool] acquire timeout after 5000ms -- all 20 connections in use",
-                },
-                {
-                    "source": "loki:payment-service",
-                    "excerpt": "ERROR connection pool exhausted; returning 503 to caller",
-                },
-                {
-                    "source": "loki:payment-service",
-                    "excerpt": "SLOW QUERY [180ms]: SELECT * FROM transactions WHERE status='pending' -- added in v2.4.1",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "http_error_rate_5xx", "value": "45%", "window": "5m"},
-                {"metric": "db_pool_wait_ms_p99", "value": "4800ms", "window": "5m"},
-                {"metric": "db_pool_active_connections", "value": "20/20 (saturated)", "window": "5m"},
-            ],
-            "recent_deploys": [
-                {
-                    "repo": "payment-service",
-                    "commit": "v2.4.1",
-                    "deployed_at": "2026-08-04T11:58:00Z",
-                    "author": "dev-alice",
-                    "pr_title": "Add pending transaction query for reporting dashboard",
-                }
-            ],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "database connection pool exhausted",
-            "provenance": "Slow unbounded query in v2.4.1 held connections beyond timeout, exhausting the pool of 20.",
-            "verified_by": "SRE postmortem PM-2026-08-04",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["connection pool", "database"],
-            "causal_mechanisms": ["exhausted", "exhaustion", "depleted", "saturated"],
-            "causal_trigger": ["slow query", "v2.4.1", "deploy"],
-            "hallucination_check": ["network partition", "OOM", "memory leak", "TLS"],
-        },
-    },
-    {
-        "id": 2,
-        "title": "payment-service memory leak causing OOM restarts",
-        "service": "payment-service",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-08-10T09:00:00Z",
-                    "event": "Deploy v2.3.0 to payment-service",
-                    "source": "github-actions",
-                },
-                {
-                    "timestamp": "2026-08-10T11:30:00Z",
-                    "event": "RSS growing -- memory alert firing",
-                    "source": "alertmanager",
-                },
-                {
-                    "timestamp": "2026-08-10T12:55:00Z",
-                    "event": "OOMKilled -- container restarted",
-                    "source": "k8s-events",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:payment-service",
-                    "excerpt": "INFO [billing-middleware] Registered EventEmitter listener (total: 847 listeners)",
-                },
-                {
-                    "source": "loki:payment-service",
-                    "excerpt": "MaxListenersExceededWarning: 850+ listeners detected for request event",
-                },
-                {
-                    "source": "k8s",
-                    "excerpt": "OOMKilled reason=OOMKilled exitCode=137 container=payment-service",
-                },
-            ],
-            "metric_snapshots": [
-                {
-                    "metric": "container_memory_rss_bytes",
-                    "value": "increasing monotonically over 3h",
-                    "window": "3h",
-                },
-                {"metric": "container_restarts", "value": "3 restarts in 6h", "window": "6h"},
-            ],
-            "recent_deploys": [
-                {
-                    "repo": "payment-service",
-                    "commit": "v2.3.0",
-                    "deployed_at": "2026-08-10T09:00:00Z",
-                    "author": "dev-bob",
-                    "pr_title": "Add billing audit middleware with per-request event hooks",
-                }
-            ],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "listener leak / memory leak in billing middleware",
-            "provenance": "EventEmitter listeners registered per-request but never removed in billing middleware introduced in v2.3.0.",
-            "verified_by": "Heap dump analysis postmortem PM-2026-08-10",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["billing middleware", "listener", "EventEmitter"],
-            "causal_mechanisms": ["leak", "not removed", "never removed", "unbounded growth", "accumulation"],
-            "causal_trigger": ["v2.3.0", "per-request", "middleware"],
-            "hallucination_check": ["network", "database", "connection pool", "TLS"],
-        },
-    },
-    {
-        "id": 3,
-        "title": "auth-service JWT validation latency spike",
-        "service": "auth-service",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-08-15T14:00:00Z",
-                    "event": "JWKS cache keys expired simultaneously",
-                    "source": "auth-service-log",
-                },
-                {
-                    "timestamp": "2026-08-15T14:00:01Z",
-                    "event": "P99 latency jumped from 12ms to 890ms",
-                    "source": "prometheus",
-                },
-                {
-                    "timestamp": "2026-08-15T14:00:45Z",
-                    "event": "JWKS cache refilled, latency recovered",
-                    "source": "prometheus",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:auth-service",
-                    "excerpt": "WARN [jwks-cache] Cache miss -- fetching remote JWKS from identity provider",
-                },
-                {
-                    "source": "loki:auth-service",
-                    "excerpt": "INFO [jwks-cache] 1843 concurrent goroutines waiting for JWKS refresh",
-                },
-                {
-                    "source": "loki:auth-service",
-                    "excerpt": "INFO [jwks-cache] JWKS refreshed in 820ms, unblocking waiters",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "jwt_validation_p99_ms", "value": "890ms peak", "window": "1m"},
-                {"metric": "jwks_cache_hit_rate", "value": "0% for 45s", "window": "1m"},
-                {"metric": "concurrent_jwks_refreshers", "value": "1843", "window": "30s"},
-            ],
-            "recent_deploys": [],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "JWKS cache expiration thundering herd",
-            "provenance": "All cached JWKS keys expired at the same TTL, causing a thundering-herd of simultaneous refresh requests.",
-            "verified_by": "Auth-service SRE review 2026-08-15",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["JWKS", "cache"],
-            "causal_mechanisms": [
-                "thundering herd",
-                "stampede",
-                "simultaneous expiration",
-                "concurrent refresh",
-                "cache miss storm",
-            ],
-            "causal_trigger": ["TTL", "expiration", "expired"],
-            "hallucination_check": ["deploy", "certificate", "memory", "database"],
-        },
-    },
-    {
-        "id": 4,
-        "title": "auth-service complete outage -- misconfigured TLS cert",
-        "service": "auth-service",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-09-01T03:00:00Z",
-                    "event": "Automated cert rotation ran",
-                    "source": "cert-manager",
-                },
-                {
-                    "timestamp": "2026-09-01T03:01:30Z",
-                    "event": "auth-service pods failing readiness -- TLS handshake errors",
-                    "source": "k8s-events",
-                },
-                {
-                    "timestamp": "2026-09-01T03:01:45Z",
-                    "event": "100% of auth-service requests failing",
-                    "source": "alertmanager",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:auth-service",
-                    "excerpt": "ERROR tls: no certificates configured for auth.internal.cluster.local",
-                },
-                {
-                    "source": "loki:api-gateway",
-                    "excerpt": "ERROR upstream TLS handshake failed: x509: certificate is not valid for auth.internal.cluster.local",
-                },
-                {
-                    "source": "loki:cert-manager",
-                    "excerpt": "INFO Certificate issued for auth-service.default.svc -- SANs: [auth-service.example.com]",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "auth_service_request_success_rate", "value": "0%", "window": "5m"},
-                {"metric": "tls_handshake_failures", "value": "100%", "window": "5m"},
-            ],
-            "recent_deploys": [
-                {
-                    "repo": "cert-manager-config",
-                    "commit": "rotate-cert-2026-09",
-                    "deployed_at": "2026-09-01T03:00:00Z",
-                    "author": "cert-rotation-bot",
-                    "pr_title": "Scheduled TLS cert rotation for auth-service",
-                }
-            ],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "missing SAN in rotated TLS certificate",
-            "provenance": "New cert issued with only the public SAN; internal cluster DNS name omitted from SubjectAltName list.",
-            "verified_by": "Postmortem PM-2026-09-01",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["certificate", "SAN", "SubjectAltName"],
-            "causal_mechanisms": ["missing", "not included", "omitted", "not valid for"],
-            "causal_trigger": ["rotation", "cert rotation", "internal DNS", "cluster DNS"],
-            "hallucination_check": ["connection pool", "memory", "cache", "query"],
-        },
-    },
-    {
-        "id": 5,
-        "title": "notification-service queue backlog -- emails delayed 2h",
-        "service": "notification-service",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-08-20T08:00:00Z",
-                    "event": "Helm chart upgrade deployed",
-                    "source": "github-actions",
-                },
-                {
-                    "timestamp": "2026-08-20T08:05:00Z",
-                    "event": "Email queue depth growing exponentially",
-                    "source": "alertmanager",
-                },
-                {
-                    "timestamp": "2026-08-20T10:10:00Z",
-                    "event": "Queue depth 45000 -- 2h email delay",
-                    "source": "alertmanager",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:notification-service",
-                    "excerpt": "INFO [worker-pool] Starting 1 email worker (configured: 1)",
-                },
-                {
-                    "source": "loki:notification-service",
-                    "excerpt": "WARN [email-queue] Queue depth: 45000, active workers: 1, expected: 8",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "email_queue_depth", "value": "45000", "window": "5m"},
-                {"metric": "active_email_workers", "value": "1", "window": "5m"},
-                {"metric": "email_processing_rate_per_min", "value": "12 (expected ~1000)", "window": "5m"},
-            ],
-            "recent_deploys": [
-                {
-                    "repo": "notification-service-helm",
-                    "commit": "helm-upgrade-v3.2.0",
-                    "deployed_at": "2026-08-20T08:00:00Z",
-                    "author": "deploy-bot",
-                    "pr_title": "Upgrade Helm chart to v3.2.0",
-                }
-            ],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "notification worker count misconfiguration",
-            "provenance": "Helm chart upgrade accidentally reset worker replica count from 8 to 1.",
-            "verified_by": "Postmortem PM-2026-08-20",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["worker", "worker count", "replica"],
-            "causal_mechanisms": ["misconfiguration", "misconfigured", "reduced", "reset", "wrong value", "set to 1"],
-            "causal_trigger": ["Helm", "helm upgrade", "chart upgrade"],
-            "hallucination_check": ["memory", "OOM", "database", "TLS", "cache"],
-        },
-    },
-    {
-        "id": 6,
-        "title": "notification-service Slack webhook rate limit exceeded",
-        "service": "notification-service",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-09-05T16:00:00Z",
-                    "event": "Alert storm: 2300 alerts fired in 10 minutes",
-                    "source": "alertmanager",
-                },
-                {
-                    "timestamp": "2026-09-05T16:03:00Z",
-                    "event": "Slack webhook responses: HTTP 429 Too Many Requests",
-                    "source": "loki:notification-service",
-                },
-                {
-                    "timestamp": "2026-09-05T16:10:00Z",
-                    "event": "All Slack notifications silently dropped",
-                    "source": "loki:notification-service",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:notification-service",
-                    "excerpt": "ERROR [slack-webhook] POST https://hooks.slack.com -- HTTP 429 Retry-After: 60",
-                },
-                {
-                    "source": "loki:notification-service",
-                    "excerpt": "WARN [slack-webhook] Rate limit hit -- no backoff configured, dropping message",
-                },
-                {
-                    "source": "loki:notification-service",
-                    "excerpt": "INFO Sent 2300 webhook POSTs in 600s to Slack",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "slack_webhook_http_429_count", "value": "1847", "window": "10m"},
-                {"metric": "slack_notifications_dropped", "value": "1847", "window": "10m"},
-            ],
-            "recent_deploys": [],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "Slack API rate limiting under alert storm",
-            "provenance": "Notification service fired 2300 Slack webhooks without backoff; Slack rate-limited at 1 msg/s per channel.",
-            "verified_by": "Slack API audit 2026-09-05",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["Slack", "webhook", "rate limit"],
-            "causal_mechanisms": ["rate limited", "rate limiting", "429", "throttled", "throttling"],
-            "causal_trigger": ["alert storm", "no backoff", "backoff not configured", "burst"],
-            "hallucination_check": ["database", "TLS", "memory", "connection pool"],
-        },
-    },
-    {
-        "id": 7,
-        "title": "api-gateway 502 cascade -- upstream connection refused",
-        "service": "api-gateway",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-08-25T10:00:00Z",
-                    "event": "payment-service rollout started",
-                    "source": "k8s-events",
-                },
-                {
-                    "timestamp": "2026-08-25T10:02:00Z",
-                    "event": "api-gateway 502 rate: 100%",
-                    "source": "alertmanager",
-                },
-                {
-                    "timestamp": "2026-08-25T10:02:10Z",
-                    "event": "payment-service pods: 0 ready / 3 running",
-                    "source": "k8s-events",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:api-gateway",
-                    "excerpt": "ERROR upstream connect error before headers: payment-service -- connection refused",
-                },
-                {
-                    "source": "k8s",
-                    "excerpt": "Readiness probe failed: HTTP probe failed with statuscode: 404 -- path: /health",
-                },
-                {
-                    "source": "k8s",
-                    "excerpt": "Readiness probe path configured as /health; actual endpoint is /healthz",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "payment_service_ready_pods", "value": "0", "window": "5m"},
-                {"metric": "api_gateway_502_rate", "value": "100%", "window": "5m"},
-                {"metric": "readiness_probe_failure_count", "value": "180", "window": "3m"},
-            ],
-            "recent_deploys": [
-                {
-                    "repo": "payment-service",
-                    "commit": "rollout-v2.5.0",
-                    "deployed_at": "2026-08-25T10:00:00Z",
-                    "author": "deploy-bot",
-                    "pr_title": "Rollout payment-service v2.5.0",
-                }
-            ],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "readiness probe configuration mismatch",
-            "provenance": "Probe path /health; endpoint moved to /healthz in v2.5.0. All pods failed readiness, leaving 0 active endpoints.",
-            "verified_by": "K8s SRE review 2026-08-25",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["readiness probe", "probe"],
-            "causal_mechanisms": ["mismatch", "misconfigured", "wrong path", "path mismatch", "404"],
-            "causal_trigger": ["rollout", "deploy", "/health", "/healthz"],
-            "hallucination_check": ["TLS", "memory", "connection pool", "rate limit"],
-        },
-    },
-    {
-        "id": 8,
-        "title": "api-gateway TLS 1.0 deprecation breaking legacy clients",
-        "service": "api-gateway",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-09-10T00:00:00Z",
-                    "event": "TLS 1.0/1.1 disabled on api-gateway",
-                    "source": "change-management",
-                },
-                {
-                    "timestamp": "2026-09-10T00:05:00Z",
-                    "event": "B2B partner error alerts: SSL handshake failure",
-                    "source": "alertmanager",
-                },
-                {
-                    "timestamp": "2026-09-10T08:00:00Z",
-                    "event": "3 enterprise B2B customers reporting complete API failure",
-                    "source": "support-ticket",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:api-gateway",
-                    "excerpt": "ERROR TLS handshake error from 203.0.113.45: tls: no supported versions satisfy minVersion",
-                },
-                {
-                    "source": "loki:api-gateway",
-                    "excerpt": "INFO TLS negotiation: client offered [TLSv1.0], server minimum is TLSv1.2 -- rejected",
-                },
-                {
-                    "source": "support",
-                    "excerpt": "Client system: Java 7 JRE, .NET Framework 4.5 -- both only support TLS 1.0",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "b2b_api_request_failure_rate", "value": "100% for affected clients", "window": "8h"},
-                {"metric": "tls10_connection_attempts_blocked", "value": "4200", "window": "8h"},
-            ],
-            "recent_deploys": [
-                {
-                    "repo": "api-gateway-config",
-                    "commit": "disable-tls10",
-                    "deployed_at": "2026-09-10T00:00:00Z",
-                    "author": "security-team",
-                    "pr_title": "Enforce TLS 1.2+ minimum -- disable TLS 1.0 and 1.1",
-                }
-            ],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "TLS 1.0 deprecation breaking legacy clients",
-            "provenance": "Enforcing TLS 1.2+ minimum broke Java 7 and .NET 4.5 B2B clients that only support TLS 1.0.",
-            "verified_by": "Security team postmortem 2026-09-10",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["TLS", "TLS 1.0"],
-            "causal_mechanisms": ["deprecation", "deprecated", "disabled", "enforcement", "minimum version"],
-            "causal_trigger": ["legacy client", "Java 7", ".NET 4.5", "B2B"],
-            "hallucination_check": ["connection pool", "memory", "cache", "worker", "queue"],
-        },
-    },
-    {
-        "id": 9,
-        "title": "payment-service duplicate charge bug after retry storm",
-        "service": "payment-service",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-09-12T15:00:00Z",
-                    "event": "Network instability: upstream payment processor latency 2-8s",
-                    "source": "cloud-provider-status",
-                },
-                {
-                    "timestamp": "2026-09-12T15:05:00Z",
-                    "event": "Charge retry storm -- 1200 retries in 5 minutes",
-                    "source": "loki:payment-service",
-                },
-                {
-                    "timestamp": "2026-09-12T15:30:00Z",
-                    "event": "340 duplicate charge reports from customers",
-                    "source": "support-tickets",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:payment-service",
-                    "excerpt": "WARN [idempotency] Key charge-req-a7f3c2 not found in Redis -- treating as new request",
-                },
-                {
-                    "source": "loki:payment-service",
-                    "excerpt": "INFO [idempotency] Key TTL set to 60s on charge creation",
-                },
-                {
-                    "source": "loki:payment-service",
-                    "excerpt": "ERROR [payment] Network timeout -- retrying charge charge-req-a7f3c2 (attempt 2)",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "idempotency_key_hit_rate", "value": "0% during retry window", "window": "30m"},
-                {"metric": "duplicate_charge_count", "value": "340", "window": "30m"},
-                {"metric": "redis_idempotency_key_ttl_seconds", "value": "60", "window": "current"},
-            ],
-            "recent_deploys": [],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "idempotency key expiry too short",
-            "provenance": "Redis idempotency keys expired (60s TTL) before retries completed (up to 8s timeout x retries), causing duplicate charges.",
-            "verified_by": "Payment SRE postmortem PM-2026-09-12",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["idempotency key", "idempotency"],
-            "causal_mechanisms": ["expired", "expiry", "TTL too short", "TTL", "short TTL"],
-            "causal_trigger": ["retry", "network timeout", "60s", "Redis"],
-            "hallucination_check": ["memory", "OOM", "TLS", "connection pool", "worker"],
-        },
-    },
-    {
-        "id": 10,
-        "title": "auth-service token refresh race condition causing logout loops",
-        "service": "auth-service",
-        "raw_evidence": {
-            "timeline": [
-                {
-                    "timestamp": "2026-09-18T09:00:00Z",
-                    "event": "Mobile app v4.2.0 released -- parallel refresh requests",
-                    "source": "release-notes",
-                },
-                {
-                    "timestamp": "2026-09-18T09:30:00Z",
-                    "event": "Spike in 401 errors -- users reporting forced logouts",
-                    "source": "alertmanager",
-                },
-                {
-                    "timestamp": "2026-09-18T10:00:00Z",
-                    "event": "5% of active mobile sessions affected",
-                    "source": "alertmanager",
-                },
-            ],
-            "log_excerpts": [
-                {
-                    "source": "loki:auth-service",
-                    "excerpt": "INFO [token-refresh] Refresh token rt-abc123 validated -- issuing new tokens",
-                },
-                {
-                    "source": "loki:auth-service",
-                    "excerpt": "WARN [token-refresh] Refresh token rt-abc123 already rotated -- token invalid",
-                },
-                {
-                    "source": "loki:auth-service",
-                    "excerpt": "INFO [token-refresh] 2 concurrent refresh requests received for same session within 50ms",
-                },
-            ],
-            "metric_snapshots": [
-                {"metric": "token_refresh_401_rate", "value": "12% of refresh calls", "window": "1h"},
-                {"metric": "concurrent_refresh_same_session", "value": "8% of mobile sessions", "window": "1h"},
-                {"metric": "forced_logout_count", "value": "1420", "window": "1h"},
-            ],
-            "recent_deploys": [
-                {
-                    "repo": "mobile-app",
-                    "commit": "v4.2.0",
-                    "deployed_at": "2026-09-18T09:00:00Z",
-                    "author": "mobile-team",
-                    "pr_title": "Parallel API request optimization -- refresh token on every concurrent call",
-                }
-            ],
-        },
-        "answer_key": {
-            "ground_truth_root_cause": "token refresh race condition causing invalidation",
-            "provenance": "Mobile v4.2.0 sends concurrent requests each triggering token refresh; server rotates on first, invalidates on second -- logout loop.",
-            "verified_by": "Auth SRE postmortem PM-2026-09-18",
-        },
-        "mechanism_rubric": {
-            "primary_components": ["token refresh", "refresh token"],
-            "causal_mechanisms": ["race condition", "race", "concurrent", "simultaneous", "invalidated"],
-            "causal_trigger": ["mobile", "v4.2.0", "parallel", "concurrent requests"],
-            "hallucination_check": ["database", "connection pool", "TLS", "memory", "cache miss"],
-        },
-    },
-]
+# ---------------------------------------------------------------------------
+# Golden dataset loader
+#
+# The frozen scenarios live in eval/golden_dataset/rca_scenarios.json (data, not
+# code) so the corpus can be independently authored, peer-reviewed, and grown
+# toward the n>=50 release gate without editing this module.  A schema +
+# ground-truth-isolation check runs at load time so a malformed or answer-leaking
+# scenario fails loudly instead of silently corrupting the benchmark.
+# ---------------------------------------------------------------------------
+
+_SCENARIOS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "golden_dataset", "rca_scenarios.json"
+)
+
+_REQUIRED_RAW_KEYS = ("timeline", "log_excerpts", "metric_snapshots")
+_REQUIRED_ANSWER_KEYS = ("ground_truth_root_cause", "provenance", "verified_by")
+_REQUIRED_RUBRIC_KEYS = ("primary_components", "causal_mechanisms", "hallucination_check")
+
+
+def _validate_scenario(s: Dict[str, Any]) -> None:
+    """Fail loudly on a malformed or answer-leaking scenario."""
+    sid = s.get("id", "?")
+    for key in ("id", "title", "service", "raw_evidence", "answer_key", "mechanism_rubric"):
+        if key not in s:
+            raise ValueError(f"golden scenario {sid}: missing required field '{key}'")
+    for key in _REQUIRED_RAW_KEYS:
+        if key not in s["raw_evidence"]:
+            raise ValueError(f"golden scenario {sid}: raw_evidence missing '{key}'")
+    for key in _REQUIRED_ANSWER_KEYS:
+        if not s["answer_key"].get(key):
+            raise ValueError(f"golden scenario {sid}: answer_key missing '{key}'")
+    for key in _REQUIRED_RUBRIC_KEYS:
+        if not s["mechanism_rubric"].get(key):
+            raise ValueError(f"golden scenario {sid}: mechanism_rubric missing/empty '{key}'")
+    # Ground-truth isolation: the exact answer must never appear verbatim in the
+    # raw evidence handed to the agent -- that would make the benchmark trivial.
+    gt = s["answer_key"]["ground_truth_root_cause"].lower()
+    raw_blob = json.dumps(s["raw_evidence"], ensure_ascii=False).lower()
+    if gt in raw_blob:
+        raise ValueError(
+            f"golden scenario {sid}: ground_truth_root_cause leaks verbatim into raw_evidence"
+        )
+
+
+def _load_golden_scenarios(path: str = _SCENARIOS_PATH) -> List[Dict[str, Any]]:
+    """Load and validate the frozen golden scenarios from JSON (data, not code)."""
+    with open(path, "r", encoding="utf-8") as fh:
+        scenarios = json.load(fh)
+    if not isinstance(scenarios, list) or not scenarios:
+        raise ValueError(f"golden dataset at {path} is empty or not a list")
+    for s in scenarios:
+        _validate_scenario(s)
+    return scenarios
+
+
+GOLDEN_SCENARIOS: List[Dict[str, Any]] = _load_golden_scenarios()
+
+# Pilot size derives from the loaded corpus (never a hardcoded literal).
+BENCHMARK_N = len(GOLDEN_SCENARIOS)
+
+
+def _peer_reviewed_count(scenarios: List[Dict[str, Any]]) -> int:
+    """Count scenarios carrying an explicit human peer-review attestation.
+
+    Peer review is a *human* act: a scenario counts only when its top-level
+    ``peer_reviewed`` field is literally ``True``.  Machine-authored cases MUST
+    ship with ``peer_reviewed: false`` (or omit it), so this can never be
+    inflated by generating more data -- see the release-gate contract in
+    docs/evaluation-methodology.md §2.
+    """
+    return sum(1 for s in scenarios if s.get("peer_reviewed") is True)
+
+
+def _evaluate_release_gate(
+    *, total: int, mechanism_accuracy_pct: float, peer_reviewed: int
+) -> Tuple[bool, List[str]]:
+    """Return ``(eligible, reasons)`` for the release gate.
+
+    All three conditions must hold; ``reasons`` lists every unmet condition so
+    the report can state *why* a run is pilot-only rather than asserting a bare
+    ``False``.  A run is release eligible ONLY when:
+
+      1. n >= RELEASE_GATE_N,
+      2. strict mechanism accuracy >= RELEASE_GATE_ACCURACY_PCT, AND
+      3. every scenario is human peer-reviewed.
+    """
+    reasons: List[str] = []
+    if total < RELEASE_GATE_N:
+        reasons.append(f"n={total} < release gate n>={RELEASE_GATE_N}")
+    if mechanism_accuracy_pct < RELEASE_GATE_ACCURACY_PCT:
+        reasons.append(
+            f"strict mechanism accuracy {mechanism_accuracy_pct:.1f}% "
+            f"< {RELEASE_GATE_ACCURACY_PCT:.0f}% floor"
+        )
+    if peer_reviewed < total:
+        reasons.append(
+            f"only {peer_reviewed}/{total} scenarios human peer-reviewed "
+            "(machine-authored != peer-reviewed)"
+        )
+    return (len(reasons) == 0), reasons
 
 
 # ---------------------------------------------------------------------------
@@ -794,7 +288,13 @@ class BenchmarkReport:
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_cost_usd: float = 0.0
+    # Number of scenarios in the corpus carrying an explicit human peer-review
+    # attestation (top-level "peer_reviewed": true).  Machine-authored cases are
+    # never counted here -- see _peer_reviewed_count / _evaluate_release_gate.
+    peer_reviewed_count: int = 0
     release_eligible: bool = False
+    # Human-readable reasons the release gate is (not) satisfied.
+    release_gate_reasons: List[str] = field(default_factory=list)
     summary: str = ""
 
 
@@ -1176,6 +676,7 @@ def _write_markdown_report(report: "BenchmarkReport", path: str) -> None:
         f"| Live | {'Yes' if report.live else 'No (skipped)'} |",
         f"| Tokens (in/out) | {report.total_input_tokens} / {report.total_output_tokens} |",
         f"| Est. cost (USD) | ${report.total_cost_usd:.6f} |",
+        f"| Peer-reviewed scenarios | {report.peer_reviewed_count}/{report.total} |",
         f"| Release eligible | {'Yes' if report.release_eligible else '**No** -- pilot only'} |",
         "",
         "## Results",
@@ -1231,9 +732,24 @@ def _write_markdown_report(report: "BenchmarkReport", path: str) -> None:
         "",
         "## Release Gate Status",
         "",
-        f"> WARNING: NOT RELEASE ELIGIBLE -- pilot run (n={report.pilot_n}).",
-        f"> Release gate requires n>={report.release_gate_n} independently authored,",
-        "> stratified, and peer-reviewed cases per docs/evaluation-methodology.md S2.",
+        (
+            f"> RELEASE ELIGIBLE (n={report.total}, "
+            f"strict accuracy {report.mechanism_accuracy_pct:.1f}%, "
+            f"{report.peer_reviewed_count}/{report.total} peer-reviewed)."
+            if report.release_eligible
+            else f"> WARNING: NOT RELEASE ELIGIBLE -- pilot run (n={report.total})."
+        ),
+        (
+            "> "
+            if report.release_eligible
+            else "> Release gate requires ALL of: n>="
+            f"{report.release_gate_n} independently authored & stratified cases, "
+            f"strict mechanism accuracy >= {RELEASE_GATE_ACCURACY_PCT:.0f}%, and every "
+            "scenario human peer-reviewed (docs/evaluation-methodology.md S2)."
+        ),
+        "",
+        "Unmet release-gate conditions:" if report.release_gate_reasons else "All release-gate conditions met.",
+        *[f"- {r}" for r in report.release_gate_reasons],
         "",
         "This number MUST NOT be reported as the same metric as Orchestration Certification",
         "(which uses mocked LLM boundaries and validates state-machine wiring,",
@@ -1488,7 +1004,16 @@ async def run_benchmark(
     report.total_output_tokens = sum(s.output_tokens for s in report.scores)
     report.total_cost_usd = sum(s.cost_usd for s in report.scores)
 
-    report.release_eligible = False  # Always False: n=10 < 50
+    # Honest release gate: eligibility is COMPUTED from n, accuracy, and human
+    # peer-review attestation -- never hardcoded.  At pilot scale (n<50, no
+    # human peer review) this evaluates to False, but it will flip truthfully
+    # once a peer-reviewed corpus of >=RELEASE_GATE_N clears the accuracy floor.
+    report.peer_reviewed_count = _peer_reviewed_count(GOLDEN_SCENARIOS)
+    report.release_eligible, report.release_gate_reasons = _evaluate_release_gate(
+        total=report.total,
+        mechanism_accuracy_pct=report.mechanism_accuracy_pct,
+        peer_reviewed=report.peer_reviewed_count,
+    )
     report.summary = (
         f"Live RCA benchmark (pilot, n={report.total}): "
         f"{report.mechanism_accuracy_pct:.1f}% "
@@ -1502,7 +1027,10 @@ async def run_benchmark(
         "label": report.label,
         "pilot_n": report.pilot_n,
         "release_gate_n": report.release_gate_n,
+        "release_gate_accuracy_pct": RELEASE_GATE_ACCURACY_PCT,
+        "peer_reviewed_count": report.peer_reviewed_count,
         "release_eligible": report.release_eligible,
+        "release_gate_reasons": report.release_gate_reasons,
         "live": report.live,
         "provider": report.provider,
         "model": report.model,

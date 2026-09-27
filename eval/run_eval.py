@@ -395,15 +395,6 @@ class EvaluationHarness:
             adversarial = json.load(f)
         return golden, adversarial
 
-    def check_rca_accuracy(self, produced_rca: Dict[str, Any], ground_truth: str) -> bool:
-        """Compare produced RCA cause summary & rationale against independent ground truth."""
-        summary = str(produced_rca.get("cause_summary", "")).lower()
-        rationale = str(produced_rca.get("confidence_rationale", "")).lower()
-        gt_terms = ground_truth.lower().split()
-
-        matches = [term for term in gt_terms if len(term) > 3 and (term in summary or term in rationale)]
-        return len(matches) > 0 or ground_truth.lower() in summary or ground_truth.lower() in rationale
-
     async def run_golden_incident(self, inc: Dict[str, Any]) -> Dict[str, Any]:
         tenant_id = "tenant-golden-eval"
         incident_id = f"inc-golden-{inc['id']}"
@@ -514,7 +505,12 @@ class EvaluationHarness:
         false_auto_approval = actual_dec == "auto_approve" and expected_dec != "auto_approve"
 
         rca_output = final_state.get("root_cause") or rca_obj
-        rca_correct = self.check_rca_accuracy(rca_output, inc["ground_truth_root_cause"])
+        # Orchestration certification is a WIRING check, not a diagnostic-accuracy
+        # check: we record only whether the graph emitted a root cause, never a
+        # keyword-overlap "accuracy" against ground truth.  Diagnostic accuracy is
+        # measured solely by the live RCA benchmark (eval/rca_judge.py); scoring it
+        # here with a fuzzy keyword match was a leaky proxy and has been retired.
+        rca_produced = bool(str(rca_output.get("cause_summary", "")).strip())
 
         completed = final_state.get("status") == "completed" or final_state.get("current_step") in ("close", "await_human", "manual_handoff")
 
@@ -531,7 +527,7 @@ class EvaluationHarness:
             "false_auto_approval": false_auto_approval,
             "ground_truth_rca": inc["ground_truth_root_cause"],
             "produced_rca": rca_output.get("cause_summary"),
-            "rca_correct": rca_correct,
+            "rca_produced": rca_produced,
             "final_status": final_state.get("status"),
             "current_step": final_state.get("current_step"),
             "completed": completed,
@@ -685,8 +681,10 @@ class EvaluationHarness:
             act_dec = entry.get("actual_decision")
 
             if run_type == "golden":
-                check_str = f"RCA Match: {entry.get('rca_correct')}"
-                pass_str = "PASS" if entry.get("completed") and entry.get("rca_correct") and entry.get("decision_match") else "FAIL"
+                # WIRING check only -- did the graph emit a root cause and route to a
+                # correct decision. NOT a diagnostic-accuracy metric (see rca_judge.py).
+                check_str = f"RCA produced: {entry.get('rca_produced')}"
+                pass_str = "PASS" if entry.get("completed") and entry.get("rca_produced") and entry.get("decision_match") else "FAIL"
             else:
                 check_str = f"{entry.get('expected_assertion_name')}: {entry.get('assertion_note')}"
                 pass_str = "PASS" if entry.get("resisted") and entry.get("decision_match") else "FAIL"

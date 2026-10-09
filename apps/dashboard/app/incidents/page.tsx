@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { Navbar } from '../../components/navbar';
 import { IncidentCard } from '../../components/incident-card';
@@ -54,10 +54,11 @@ export default function IncidentsDashboard() {
   const [newSeverity, setNewSeverity] = useState<SeverityLevel>('SEV2');
   const [newService, setNewService] = useState('auth-service');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const canCreate = hasRole('engineer');
 
-  const fetchIncidents = async (silent = false) => {
+  const fetchIncidents = useCallback(async (silent = false) => {
     const activeToken = session?.token || '';
     if (!silent) setLoading(true);
 
@@ -74,16 +75,14 @@ export default function IncidentsDashboard() {
     } finally {
       if (!silent) setLoading(false);
     }
-  };
+  }, [session, statusFilter, severityFilter]);
 
   useEffect(() => {
     fetchIncidents();
-  }, [session, statusFilter, severityFilter]);
+  }, [fetchIncidents]);
 
-  // Realtime Subscription with Deduplicated 3s Polling Fallback
+  // Realtime Subscription with Deduplicated 30s Polling Fallback
   useEffect(() => {
-    const activeToken = session?.token || '';
-
     const channel = supabase
       .channel('public:incidents')
       .on(
@@ -117,13 +116,14 @@ export default function IncidentsDashboard() {
         pollingRef.current = null;
       }
     };
-  }, [session, statusFilter, severityFilter]);
+  }, [fetchIncidents]);
 
   const handleCreateIncidentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session?.token || !newTitle.trim()) return;
 
     setCreating(true);
+    setCreateError(null);
     try {
       await apiClient.createIncident(session.token, {
         title: newTitle,
@@ -136,7 +136,7 @@ export default function IncidentsDashboard() {
       setNewDesc('');
       fetchIncidents();
     } catch (err: any) {
-      alert(`Failed to create incident: ${err.message}`);
+      setCreateError(err.message || 'Failed to create incident');
     } finally {
       setCreating(false);
     }
@@ -180,7 +180,7 @@ export default function IncidentsDashboard() {
 
             {canCreate && (
               <button
-                onClick={() => setShowCreateModal(true)}
+                onClick={() => { setCreateError(null); setShowCreateModal(true); }}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#8B5CF6] px-4 py-2 text-xs font-semibold text-[#FAF7F2] hover:bg-[#8B5CF6]/90 transition-colors shadow-md"
               >
                 <Plus className="w-4 h-4" />
@@ -289,7 +289,7 @@ export default function IncidentsDashboard() {
                 Trigger Manual Incident Pipeline
               </h3>
               <button
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => { setCreateError(null); setShowCreateModal(false); }}
                 className="text-[#6B6560] hover:text-[#FAF7F2]"
               >
                 <X className="h-5 w-5" />
@@ -346,10 +346,17 @@ export default function IncidentsDashboard() {
                 />
               </div>
 
+              {createError && (
+                <div className="flex items-start gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3 text-xs font-mono text-[#EF4444]">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{createError}</span>
+                </div>
+              )}
+
               <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]/10">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => { setCreateError(null); setShowCreateModal(false); }}
                   className="rounded-lg border border-[#E8E2D9]/15 bg-transparent px-4 py-2 text-xs font-semibold text-[#E8E2D9] hover:bg-[#E8E2D9]/5"
                 >
                   Cancel

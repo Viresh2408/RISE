@@ -122,8 +122,15 @@ test_low_risk_staging_auto_approved {
 		"blast_radius_count": 1,
 		"max_blast_radius": 3,
 		"action_type": "restart_pod",
-		"policies": [],
+        "policies": [{"action_pattern": "restart_pod", "environment": "staging", "risk_tier": "low", "requires_approval": false, "min_confidence": 0.9, "max_blast_radius": 1}],
 	}
+}
+
+test_staging_without_explicit_policy_requires_approval {
+    approval_rules.requires_approval with input as {
+        "environment": "staging", "action_type": "restart_pod", "confidence": 0.99,
+        "min_confidence": 0.9, "blast_radius_count": 1, "max_blast_radius": 1, "policies": [],
+    }
 }
 
 test_low_confidence_requires_approval {
@@ -137,4 +144,48 @@ test_low_confidence_requires_approval {
 		"action_type": "restart_pod",
 		"policies": [],
 	}
+}
+
+# A scoped policy may tighten the global limits but cannot relax them or
+# authorize a different action, environment, or authoritative risk tier.
+scoped_policy := {
+    "action_pattern": "restart_pod", "environment": "staging", "risk_tier": "low",
+    "active": true, "requires_approval": false, "min_confidence": 0.9, "max_blast_radius": 1,
+}
+
+scoped_input := {
+    "environment": "staging", "action_type": "restart_pod", "confidence": 0.95,
+    "min_confidence": 0.9, "blast_radius_count": 1, "max_blast_radius": 2,
+    "policies": [scoped_policy],
+}
+
+test_inactive_policy_cannot_authorize {
+    policy := object.union(scoped_policy, {"active": false})
+    approval_rules.requires_approval with input as object.union(scoped_input, {"policies": [policy]})
+}
+
+test_foreign_environment_policy_cannot_authorize {
+    policy := object.union(scoped_policy, {"environment": "production"})
+    approval_rules.requires_approval with input as object.union(scoped_input, {"policies": [policy]})
+}
+
+test_wrong_risk_scope_cannot_authorize {
+    policy := object.union(scoped_policy, {"risk_tier": "medium"})
+    approval_rules.requires_approval with input as object.union(scoped_input, {"policies": [policy]})
+}
+
+test_policy_confidence_limit_cannot_be_relaxed {
+    policy := object.union(scoped_policy, {"min_confidence": 0.99})
+    approval_rules.requires_approval with input as object.union(scoped_input, {"policies": [policy]})
+}
+
+test_policy_blast_radius_limit_cannot_be_relaxed {
+    policy := object.union(scoped_policy, {"max_blast_radius": 0})
+    approval_rules.requires_approval with input as object.union(scoped_input, {"policies": [policy]})
+}
+
+test_claimed_low_risk_cannot_override_critical_action {
+    policy := object.union(scoped_policy, {"action_pattern": "drop_table"})
+    scenario := object.union(scoped_input, {"action_type": "drop_table", "risk_tier": "low", "policies": [policy]})
+    approval_rules.requires_approval with input as scenario
 }

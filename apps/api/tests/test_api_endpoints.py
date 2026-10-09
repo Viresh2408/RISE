@@ -134,7 +134,7 @@ def test_approve_action_missing_idempotency_key():
     assert json_data["error"]["code"] == "VALIDATION_ERROR"
 
 
-def test_approve_action_success_with_idempotency_key(monkeypatch):
+def test_missing_action_cannot_be_approved_with_idempotency_key(monkeypatch):
     # Hermetic fail-closed: stub the canonical GitHub path to its no-credentials result
     # so the suite never writes to the live repo (a real GITHUB_TOKEN may be present in
     # .env, and actions.py imports github_service lazily, re-running load_dotenv()).
@@ -158,34 +158,26 @@ def test_approve_action_success_with_idempotency_key(monkeypatch):
         headers=headers,
         json={"note": "Approved by engineering lead"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 404
     json_data = response.json()
-    # Fail-closed contract: MCP write mock is disabled outside dev, so create_pr is
-    # rejected and verification fails → requires_human / failed (not fabricated success).
-    assert json_data["data"]["status"] == "requires_human"
-    assert json_data["data"]["execution_status"] == "failed"
-    assert json_data["error"] is None
+    assert json_data["data"] is None
+    assert json_data["error"]["code"] == "NOT_FOUND"
 
 
 @pytest.mark.parametrize(
-    "action_id, expected_code",
-    [
-        ("plan-changed", "ACTION_PLAN_CHANGED"),
-        ("expired", "APPROVAL_EXPIRED"),
-        ("locked", "RESOURCE_LOCKED"),
-    ],
+    "action_id", ["plan-changed", "expired", "locked"],
 )
-def test_approve_action_409_conflict_error_codes(action_id: str, expected_code: str):
+def test_fixture_named_actions_are_not_real_approval_targets(action_id: str):
     headers = {**APPROVER_HEADERS, "Idempotency-Key": "idempotency-uuid-12345"}
     response = client.post(
         f"/api/v1/incidents/inc-001/actions/{action_id}/approve",
         headers=headers,
         json={"note": "Test approval"},
     )
-    assert response.status_code == 409
+    assert response.status_code == 404
     json_data = response.json()
     assert json_data["data"] is None
-    assert json_data["error"]["code"] == expected_code
+    assert json_data["error"]["code"] == "NOT_FOUND"
 
 
 @pytest.mark.parametrize(
@@ -254,4 +246,3 @@ def test_webhooks_without_jwt_auth(webhook_path: str):
     json_data = response.json()
     assert json_data["data"]["received"] is True
     assert json_data["error"] is None
-

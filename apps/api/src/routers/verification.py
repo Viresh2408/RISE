@@ -52,7 +52,7 @@ async def get_verification(
     inc_uuid = _parse_uuid(incident_id)
 
     incident = db.execute(
-        select(Incident).where(Incident.id == inc_uuid)
+        select(Incident).where(Incident.id == inc_uuid, Incident.tenant_id == tenant_id)
     ).scalar_one_or_none()
     if incident is None:
         raise HTTPException(

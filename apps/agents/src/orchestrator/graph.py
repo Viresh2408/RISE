@@ -7,7 +7,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Optional, TypedDict
+from typing import Any, Callable, Mapping, Optional, TypedDict, cast
 
 _CORE_PATH = str(Path(__file__).resolve().parents[4] / "packages" / "rise-core")
 if _CORE_PATH not in sys.path:
@@ -26,6 +26,13 @@ class AgentState(TypedDict, total=False):
     tenant_id: str
     incident_id: str
     agent_run_id: str
+    environment: str
+    resource_id: str
+    service_id: str
+    service_criticality: str
+    service_metadata: dict
+    topology_missing: bool
+    blast_radius_services: list
 
     # Pipeline data
     event_payload: dict
@@ -64,8 +71,18 @@ class AgentState(TypedDict, total=False):
     # Approval anchoring (ADR-005): the plan hash the human approved and the flag
     # that forces execution to run only against that anchor. Declared as channels
     # so they survive the await_human interrupt/checkpoint into the execute node.
-    approved_plan_hash: str
+    approved_plan_hash: str | None
     require_approved_hash: bool
+
+
+def _copy_state(state: AgentState | Mapping[str, Any]) -> AgentState:
+    """Copy a heterogeneous TypedDict without losing its declared shape."""
+    return cast(AgentState, dict(state))
+
+
+def _state_payload(state: AgentState) -> dict[str, Any]:
+    """Expose state to node implementations that use an ordinary mapping."""
+    return dict(state)
 
 
 def _to_jsonable(obj: Any) -> Any:
@@ -95,25 +112,24 @@ def _record_step_result(
 
     try:
         from db.models import AgentStepResult
-        from db.session import SessionLocal, tenant_session
+        from db.session import tenant_session
 
         clean_input = _to_jsonable(input_data)
         clean_output = _to_jsonable(output_data)
 
-        with tenant_session(tenant_id):
-            with SessionLocal() as session:
-                step_result = AgentStepResult(
-                    id=uuid.uuid4(),
-                    tenant_id=uuid.UUID(str(tenant_id)) if isinstance(tenant_id, str) else tenant_id,
-                    agent_run_id=uuid.UUID(str(agent_run_id)) if isinstance(agent_run_id, str) else agent_run_id,
-                    agent_name=node_name,
-                    input=clean_input,
-                    output=clean_output,
-                    confidence=confidence,
-                    duration_ms=duration_ms,
-                )
-                session.add(step_result)
-                session.commit()
+        with tenant_session(tenant_id) as session:
+            step_result = AgentStepResult(
+                id=uuid.uuid4(),
+                tenant_id=uuid.UUID(str(tenant_id)) if isinstance(tenant_id, str) else tenant_id,
+                agent_run_id=uuid.UUID(str(agent_run_id)) if isinstance(agent_run_id, str) else agent_run_id,
+                agent_name=node_name,
+                input=clean_input,
+                output=clean_output,
+                confidence=confidence,
+                duration_ms=duration_ms,
+            )
+            session.add(step_result)
+            session.commit()
     except Exception as exc:
         logger.debug("Failed to record AgentStepResult to DB: %s", exc)
 
@@ -126,7 +142,7 @@ def run_node_with_retry_and_timeout(
     timeout_s: int = NODE_TIMEOUT_SECONDS,
 ) -> AgentState:
     """Execute node_fn(state) with timeout, retry-once-then-escalate, and DB step auditing."""
-    new_state: AgentState = dict(state)
+    new_state = _copy_state(state)
     new_state["current_step"] = node_name
 
     retry_counts = dict(new_state.get("retry_counts") or {})
@@ -139,7 +155,7 @@ def run_node_with_retry_and_timeout(
         attempt += 1
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(node_fn, dict(new_state))
+                future = executor.submit(node_fn, _copy_state(new_state))
                 node_output = future.result(timeout=timeout_s)
             last_error = None
             break
@@ -159,7 +175,7 @@ def run_node_with_retry_and_timeout(
         _record_step_result(
             state=new_state,
             node_name=node_name,
-            input_data=dict(state),
+            input_data=_state_payload(state),
             output_data={"error": last_error, "attempts": attempt},
             confidence=0.0,
             duration_ms=duration_ms,
@@ -174,8 +190,8 @@ def run_node_with_retry_and_timeout(
     _record_step_result(
         state=new_state,
         node_name=node_name,
-        input_data=dict(state),
-        output_data=dict(new_state),
+        input_data=_state_payload(state),
+        output_data=_state_payload(new_state),
         confidence=1.0,
         duration_ms=duration_ms,
     )
@@ -186,7 +202,7 @@ def run_node_with_retry_and_timeout(
 
 
 def node_ingest(state: AgentState) -> AgentState:
-    res = dict(state)
+    res = _copy_state(state)
     payload = dict(res.get("event_payload") or {})
     summary = str(payload.get("summary", "")).lower()
     raw_text = str(payload.get("raw_payload", payload)).lower()
@@ -216,16 +232,16 @@ def node_ingest(state: AgentState) -> AgentState:
 
 def node_build_context(state: AgentState) -> AgentState:
     if state.get("context"):
-        return dict(state)
+        return _copy_state(state)
     from apps.agents.src.nodes.context_builder import run_context_builder_agent
 
     try:
-        return asyncio.run(run_context_builder_agent(dict(state)))
+        return _copy_state(asyncio.run(run_context_builder_agent(_state_payload(state))))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(run_context_builder_agent(dict(state)))
+            return _copy_state(loop.run_until_complete(run_context_builder_agent(_state_payload(state))))
         finally:
             loop.close()
 
@@ -234,48 +250,48 @@ def node_build_context(state: AgentState) -> AgentState:
 
 def node_investigate(state: AgentState) -> AgentState:
     if state.get("hypotheses"):
-        return dict(state)
+        return _copy_state(state)
     from apps.agents.src.nodes.investigation import run_investigation_agent
 
     try:
-        return asyncio.run(run_investigation_agent(dict(state)))
+        return _copy_state(asyncio.run(run_investigation_agent(_state_payload(state))))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(run_investigation_agent(dict(state)))
+            return _copy_state(loop.run_until_complete(run_investigation_agent(_state_payload(state))))
         finally:
             loop.close()
 
 
 def node_root_cause(state: AgentState) -> AgentState:
     if state.get("root_cause"):
-        return dict(state)
+        return _copy_state(state)
     from apps.agents.src.nodes.root_cause import run_root_cause_agent
 
     try:
-        return asyncio.run(run_root_cause_agent(dict(state)))
+        return _copy_state(asyncio.run(run_root_cause_agent(_state_payload(state))))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(run_root_cause_agent(dict(state)))
+            return _copy_state(loop.run_until_complete(run_root_cause_agent(_state_payload(state))))
         finally:
             loop.close()
 
 
 def node_impact_analysis(state: AgentState) -> AgentState:
     if state.get("impact_assessment"):
-        return dict(state)
+        return _copy_state(state)
     from apps.agents.src.nodes.impact_analyzer import run_impact_analyzer_agent
 
     try:
-        return asyncio.run(run_impact_analyzer_agent(dict(state)))
+        return _copy_state(asyncio.run(run_impact_analyzer_agent(_state_payload(state))))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(run_impact_analyzer_agent(dict(state)))
+            return _copy_state(loop.run_until_complete(run_impact_analyzer_agent(_state_payload(state))))
         finally:
             loop.close()
 
@@ -283,7 +299,7 @@ def node_impact_analysis(state: AgentState) -> AgentState:
 
 def node_decide(state: AgentState) -> AgentState:
     if state.get("decision") and "requires_approval" in (state.get("decision") or {}):
-        res = dict(state)
+        res = _copy_state(state)
         dec = res["decision"]
         res["requires_approval"] = dec.get("requires_approval", False)
         res["risk_tier"] = dec.get("risk_tier", "low")
@@ -299,14 +315,17 @@ def node_decide(state: AgentState) -> AgentState:
         return res
 
     from apps.agents.src.nodes.decision_plan import run_decision_plan_agent
+    from db.session import tenant_session
 
     try:
-        return asyncio.run(run_decision_plan_agent(dict(state), use_local_risk_fallback=True))
+        with tenant_session(state["tenant_id"]) as db:
+            return _copy_state(asyncio.run(run_decision_plan_agent(_state_payload(state), db=db)))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(run_decision_plan_agent(dict(state), use_local_risk_fallback=True))
+            with tenant_session(state["tenant_id"]) as db:
+                return _copy_state(loop.run_until_complete(run_decision_plan_agent(_state_payload(state), db=db)))
         finally:
             loop.close()
 
@@ -315,7 +334,7 @@ def node_decide(state: AgentState) -> AgentState:
 def node_await_human(state: AgentState) -> AgentState:
     from apps.agents.src.services.slack_card import format_slack_approval_card, send_slack_approval_card
 
-    res = dict(state)
+    res = _copy_state(state)
     if not res.get("await_human_reason"):
         res["await_human_reason"] = "approval_required"
 
@@ -344,9 +363,9 @@ def node_await_human(state: AgentState) -> AgentState:
             res["require_approved_hash"] = True
 
     # Render Slack approval card per prompts.md §9
-    card = format_slack_approval_card(res)
+    card = format_slack_approval_card(_state_payload(res))
     res["slack_card"] = card
-    send_slack_approval_card(res, res.get("tenant_id", "default-tenant"))
+    send_slack_approval_card(_state_payload(res), res.get("tenant_id", "default-tenant"))
 
     # If interrupt requested and no decision submitted yet, call LangGraph interrupt
     if res.get("use_interrupt") and not res.get("human_approval"):
@@ -356,7 +375,7 @@ def node_await_human(state: AgentState) -> AgentState:
             if isinstance(resume_val, str):
                 res["human_approval"] = resume_val
             elif isinstance(resume_val, dict):
-                res.update(resume_val)
+                res.update(cast(AgentState, resume_val))
         except ImportError:
             pass
 
@@ -367,12 +386,12 @@ def node_execute(state: AgentState) -> AgentState:
     from apps.agents.src.nodes.execution import run_execution_agent
 
     try:
-        res = asyncio.run(run_execution_agent(dict(state)))
+        res = _copy_state(asyncio.run(run_execution_agent(_state_payload(state))))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            res = loop.run_until_complete(run_execution_agent(dict(state)))
+            res = _copy_state(loop.run_until_complete(run_execution_agent(_state_payload(state))))
         finally:
             loop.close()
 
@@ -385,12 +404,12 @@ def node_verify(state: AgentState) -> AgentState:
     from apps.agents.src.nodes.verification import run_verification_agent
 
     try:
-        return asyncio.run(run_verification_agent(dict(state)))
+        return _copy_state(asyncio.run(run_verification_agent(_state_payload(state))))
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(run_verification_agent(dict(state)))
+            return _copy_state(loop.run_until_complete(run_verification_agent(_state_payload(state))))
         finally:
             loop.close()
 
@@ -398,7 +417,7 @@ def node_verify(state: AgentState) -> AgentState:
 def node_rollback(state: AgentState) -> AgentState:
     from apps.agents.src.nodes.execution import run_execution_agent
 
-    res = dict(state)
+    res = _copy_state(state)
     rollback_count = res.get("rollback_count", 0) + 1
     res["rollback_count"] = rollback_count
 
@@ -426,7 +445,7 @@ def node_rollback(state: AgentState) -> AgentState:
             "plan_rationale": "Auto-rollback triggered on verification failure",
             "requires_manual_plan": True,
         }
-        rollback_state = dict(res)
+        rollback_state = _copy_state(res)
         rollback_state["action_plan"] = rollback_action_plan
         # The auto-rollback plan is a system-generated safety action, NOT the
         # human-approved forward plan, so it deliberately runs un-anchored. Clear
@@ -436,9 +455,11 @@ def node_rollback(state: AgentState) -> AgentState:
         # spurious ACTION_PLAN_CHANGED.
         rollback_state["approved_plan_hash"] = None
         rollback_state["require_approved_hash"] = False
+        rollback_state["human_approval"] = ""
         try:
-            exec_res = asyncio.run(run_execution_agent(rollback_state))
-            res["rollback_execution_log"] = exec_res.get("execution_log")
+            exec_res = asyncio.run(run_execution_agent(_state_payload(rollback_state)))
+            rollback_log = exec_res.get("execution_log")
+            res["rollback_execution_log"] = rollback_log if isinstance(rollback_log, dict) else {}
         except Exception as exc:
             logger.error("Auto-rollback execution failed: %s", exc)
 
@@ -448,7 +469,7 @@ def node_rollback(state: AgentState) -> AgentState:
 
 
 def node_close(state: AgentState) -> AgentState:
-    res = dict(state)
+    res = _copy_state(state)
     res["status"] = "completed"
     res["should_escalate"] = False
     res["current_step"] = "close"
@@ -456,13 +477,13 @@ def node_close(state: AgentState) -> AgentState:
 
 
 def node_manual_handoff(state: AgentState) -> AgentState:
-    res = dict(state)
+    res = _copy_state(state)
     res["status"] = "manual_handoff"
     return res
 
 
 def node_escalate(state: AgentState) -> AgentState:
-    res = dict(state)
+    res = _copy_state(state)
     res["status"] = "escalated"
     return res
 
@@ -566,21 +587,20 @@ def create_orchestrator_graph(checkpointer: Any = None) -> Any:
 def _create_agent_run_record(tenant_id: str, incident_id: str, agent_run_id: str) -> None:
     try:
         from db.models import AgentRun
-        from db.session import SessionLocal, tenant_session
+        from db.session import tenant_session
         from datetime import datetime, timezone
 
-        with tenant_session(tenant_id):
-            with SessionLocal() as session:
-                run = AgentRun(
-                    id=uuid.UUID(str(agent_run_id)),
-                    tenant_id=uuid.UUID(str(tenant_id)),
-                    incident_id=uuid.UUID(str(incident_id)),
-                    trigger_type="automated",
-                    status="running",
-                    started_at=datetime.now(timezone.utc),
-                )
-                session.add(run)
-                session.commit()
+        with tenant_session(tenant_id) as session:
+            run = AgentRun(
+                id=uuid.UUID(str(agent_run_id)),
+                tenant_id=uuid.UUID(str(tenant_id)),
+                incident_id=uuid.UUID(str(incident_id)),
+                trigger_type="automated",
+                status="running",
+                started_at=datetime.now(timezone.utc),
+            )
+            session.add(run)
+            session.commit()
     except Exception as exc:
         logger.debug("Failed to create AgentRun DB record: %s", exc)
 
@@ -588,16 +608,18 @@ def _create_agent_run_record(tenant_id: str, incident_id: str, agent_run_id: str
 def _update_agent_run_status(tenant_id: str, agent_run_id: str, status: str) -> None:
     try:
         from db.models import AgentRun
-        from db.session import SessionLocal, tenant_session
+        from db.session import tenant_session
         from datetime import datetime, timezone
 
-        with tenant_session(tenant_id):
-            with SessionLocal() as session:
-                run = session.query(AgentRun).filter(AgentRun.id == uuid.UUID(str(agent_run_id))).first()
-                if run:
-                    run.status = status
-                    run.completed_at = datetime.now(timezone.utc)
-                    session.commit()
+        with tenant_session(tenant_id) as session:
+            run = session.query(AgentRun).filter(
+                AgentRun.id == uuid.UUID(str(agent_run_id)),
+                AgentRun.tenant_id == uuid.UUID(str(tenant_id)),
+            ).first()
+            if run:
+                run.status = status
+                run.completed_at = datetime.now(timezone.utc)
+                session.commit()
     except Exception as exc:
         logger.debug("Failed to update AgentRun DB status: %s", exc)
 

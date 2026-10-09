@@ -9,9 +9,15 @@ sys.path.insert(0, os.path.abspath("packages/rise-core"))
 sys.path.insert(0, os.path.abspath("."))
 
 from db.base import Base
-import db.models  # Ensure all models are registered
+import db.models  # noqa: F401 — register every model in Base.metadata
 
 config = context.config
+
+# Deployment-provided URLs take precedence over the local alembic.ini default.
+# Escape '%' for ConfigParser; URL-encoded passwords must round-trip unchanged.
+database_url = os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 if config.config_file_name:
     fileConfig(config.config_file_name)

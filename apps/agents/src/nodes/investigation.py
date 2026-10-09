@@ -103,7 +103,7 @@ def fetch_runbook_snippets(
         from knowledge_service.client import get_qdrant_client
         from knowledge_service.schemas import KnowledgeFilter
         from knowledge_service.service import KnowledgeService
-        from db.session import SessionLocal, tenant_session
+        from db.session import tenant_session
         from db.models import KnowledgeEntry
         import uuid
 
@@ -125,16 +125,16 @@ def fetch_runbook_snippets(
             return "No relevant runbook snippets found in knowledge base.", False
 
         snippets = []
-        with tenant_session(tenant_id):
-            with SessionLocal() as session:
-                for r in results:
-                    entry = session.query(KnowledgeEntry).filter(
-                        KnowledgeEntry.id == uuid.UUID(r.knowledge_entry_id)
-                    ).first()
-                    if entry:
-                        snippets.append(
-                            f"--- Runbook: {entry.title} ---\n{entry.content}"
-                        )
+        with tenant_session(tenant_id) as session:
+            for r in results:
+                entry = session.query(KnowledgeEntry).filter(
+                    KnowledgeEntry.id == uuid.UUID(r.knowledge_entry_id),
+                    KnowledgeEntry.tenant_id == uuid.UUID(str(tenant_id)),
+                ).first()
+                if entry:
+                    snippets.append(
+                        f"--- Runbook: {entry.title} ---\n{entry.content}"
+                    )
 
         if not snippets:
             return "No relevant runbook content could be retrieved.", False

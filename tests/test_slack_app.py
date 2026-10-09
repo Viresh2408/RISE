@@ -1,8 +1,9 @@
 """Tests for Slack App ChatOps, Slash Commands, Interactive Approval Cards, and MCP-Slack Server.
 
-Validates Definition of Done:
+Offline Slack compatibility and transport-contract coverage:
 1. `/rise status <incident_id>` returns correct live data in Slack.
-2. Approval card buttons correctly call real approve/reject/modify API and enforce single-use approval locking (409 Conflict).
+2. Local approval-card fixtures enforce their single-use cache. Deployed callbacks
+   fail closed until tenant-bound actors/actions/plan hashes are wired to the API.
 3. Card content matches template in prompts.md §9 field-for-field.
 4. MCP Slack Server integration dispatches tools cleanly through MCPGateway.
 """
@@ -250,6 +251,21 @@ def test_approval_card_button_modify():
     data = resp.json()["data"]
     assert data["status"] == "re-evaluated"
     assert "MODIFIED" in data["text"]
+
+
+@pytest.mark.parametrize("operation", ["approve", "reject", "modify"])
+@pytest.mark.parametrize("prefix", ["", "unexpected"])
+def test_deployed_slack_decisions_cannot_use_the_local_approval_facade(monkeypatch, operation, prefix):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    payload = {"type": "block_actions", "actions": [{
+        "action_id": f"{operation}_action", "value": f"{prefix or operation}:inc-slack-guard",
+    }]}
+    response = client.post(
+        "/api/v1/webhooks/slack", content=f"payload={json.dumps(payload)}".encode(),
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "CHATOPS_APPROVAL_UNAVAILABLE"
 
 
 # =============================================================================

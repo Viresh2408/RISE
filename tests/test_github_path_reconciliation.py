@@ -30,6 +30,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from db.base import Base
+from db.models import Incident, RemediationAction, Tenant
 from apps.api.src.deps.db import get_db
 from apps.api.src.deps.redis import get_redis_client
 
@@ -101,6 +102,21 @@ def _approver_headers():
 _REAL_PR_URL = "https://github.com/Viresh2408/RISE/pull/77"
 
 
+def _seed_action():
+    tenant_id = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    incident_id, action_id = uuid.uuid4(), uuid.uuid4()
+    with _Session() as db:
+        if db.get(Tenant, tenant_id) is None:
+            db.add(Tenant(id=tenant_id, name="GitHub path test"))
+            db.flush()
+        db.add(Incident(id=incident_id, tenant_id=tenant_id, title="GitHub remediation", status="investigating", severity="SEV2"))
+        db.flush()
+        db.add(RemediationAction(id=action_id, tenant_id=tenant_id, incident_id=incident_id,
+            action_type="code_fix_pr", action_plan={"action_type": "code_fix_pr"}, risk_tier="critical", status="pending_approval"))
+        db.commit()
+    return incident_id, action_id
+
+
 async def _fake_commit_success(incident_id, incident_title, target_file="packages/rise-core/db/session.py", branch=None):
     """Stub the canonical GitHub service returning a genuine, verified PR."""
     return {
@@ -149,8 +165,9 @@ def test_successful_github_remediation_reports_verified_success(monkeypatch):
         AsyncMock(side_effect=Exception("no LLM in test env")),
     )
 
+    incident_id, action_id = _seed_action()
     resp = client.post(
-        "/api/v1/incidents/inc-auth-pool-01/actions/act-fix-01/approve",
+        f"/api/v1/incidents/{incident_id}/actions/{action_id}/approve",
         headers=_approver_headers(),
         json={"note": "Approve automated remediation"},
     )
@@ -211,6 +228,7 @@ def test_concurrent_github_approval_blocked_by_resource_lock(monkeypatch):
     approval for the same file is rejected with 409 RESOURCE_LOCKED rather than
     proceeding to a racing GitHub write."""
     clear_all_in_memory_locks()
+    incident_id, action_id = _seed_action()
     app.dependency_overrides[get_redis_client] = _override_redis_none
 
     # Guard: if the lock failed to block, this stub would let a spurious success
@@ -231,7 +249,7 @@ def test_concurrent_github_approval_blocked_by_resource_lock(monkeypatch):
 
     try:
         resp = client.post(
-            "/api/v1/incidents/inc-auth-pool-01/actions/act-fix-01/approve",
+            f"/api/v1/incidents/{incident_id}/actions/{action_id}/approve",
             headers=_approver_headers(),
             json={"note": "Second concurrent approval on the same file"},
         )
@@ -253,9 +271,10 @@ def test_github_approval_rejects_stale_plan_hash():
     with 409 ACTION_PLAN_CHANGED before `commit_remediation_to_github` is called —
     the same integrity gate execution.py applies to gateway-dispatched tools."""
     clear_all_in_memory_locks()
+    incident_id, action_id = _seed_action()
 
     resp = client.post(
-        "/api/v1/incidents/inc-auth-pool-01/actions/act-fix-01/approve",
+        f"/api/v1/incidents/{incident_id}/actions/{action_id}/approve",
         headers=_approver_headers(),
         # A hash that cannot match the canonical code-fix plan the server rebuilds.
         json={"note": "Approve", "plan_hash": "0" * 64},

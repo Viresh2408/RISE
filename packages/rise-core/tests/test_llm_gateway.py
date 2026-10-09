@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Sequence
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -61,7 +61,7 @@ _PROMPT = "What caused the incident?"
 
 def _make_config(
     *,
-    providers: list[str] = ("gemini", "openai"),
+    providers: Sequence[str] = ("gemini", "openai"),
     cost_in: float = 0.001,
     cost_out: float = 0.002,
 ) -> GatewayConfig:

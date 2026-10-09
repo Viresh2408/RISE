@@ -85,7 +85,7 @@ async def test_scenario_1_auto_approve_low_risk():
     decision = await engine.evaluate_and_plan(state, use_local_risk_fallback=True)
 
     assert decision.risk_tier == "low"
-    assert decision.requires_approval is False
+    assert decision.requires_approval is True  # No persisted policy authorizes this action.
 
 
 @pytest.mark.anyio
@@ -104,7 +104,7 @@ async def test_scenario_2_auto_approve_medium_risk_staging():
     decision = await engine.evaluate_and_plan(state, use_local_risk_fallback=True)
 
     assert decision.risk_tier == "medium"
-    assert decision.requires_approval is False
+    assert decision.requires_approval is True  # Confidence alone is not authorization.
 
 
 @pytest.mark.anyio
@@ -315,7 +315,7 @@ async def test_scenario_12_known_similarity_pattern_match():
     assert sim_res.has_known_pattern is True
     assert sim_res.matched_incident_id == "inc-prev-101"
     assert sim_res.similarity_score == 0.92
-    assert decision.requires_approval is False
+    assert decision.requires_approval is True  # Similarity never grants authorization.
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +386,7 @@ async def test_run_decision_plan_agent_node_entrypoint():
     )
 
     assert "decision" in updated_state
-    assert updated_state["requires_approval"] is False
+    assert updated_state["requires_approval"] is True
     assert updated_state["risk_tier"] == "low"
     assert updated_state["action_plan"]["action_type"] == "restart_pod"
 
@@ -507,5 +507,4 @@ async def test_run_decision_plan_agent_simulated_security_action():
     assert updated_state["decision"]["is_simulated"] is True
     assert updated_state["action_plan"]["action_type"] == "isolate_host"
     assert updated_state["action_plan"]["is_simulated"] is True
-
 

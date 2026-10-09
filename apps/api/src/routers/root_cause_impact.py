@@ -18,7 +18,9 @@ router = APIRouter(prefix="/incidents/{incident_id}", tags=["Root Cause & Impact
 
 def _load_incident(db: Session, tenant_id, incident_id: str) -> Incident:
     inc = db.execute(
-        select(Incident).where(Incident.id == _parse_uuid(incident_id))
+        select(Incident).where(
+            Incident.id == _parse_uuid(incident_id), Incident.tenant_id == tenant_id,
+        )
     ).scalar_one_or_none()
     if inc is None:
         raise HTTPException(

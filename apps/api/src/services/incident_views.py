@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from db.models import (
     AgentStepResult,
+    AgentRun,
     Evidence,
     ImpactAssessment,
     Incident,
@@ -139,13 +140,15 @@ def build_root_cause_view(
 
     # Fallback to the most recent root-cause agent step, if one ran.
     step = db.execute(
-        select(AgentStepResult).where(
+        select(AgentStepResult).join(AgentRun, AgentRun.id == AgentStepResult.agent_run_id).where(
             AgentStepResult.tenant_id == tenant_id,
+            AgentRun.tenant_id == tenant_id,
+            AgentRun.incident_id == incident.id,
             AgentStepResult.agent_name.in_(["root_cause", "node_root_cause"]),
         ).order_by(AgentStepResult.created_at.desc())
     ).scalars().first()
     if step and isinstance(step.output, dict):
-        out = step.output
+        out = step.output.get("root_cause") or step.output
         stored_conf = out.get("confidence", None)
         if stored_conf is None or stored_conf == 0.85:
             stored_conf = _compute_confidence(

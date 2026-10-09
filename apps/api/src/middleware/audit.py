@@ -26,17 +26,18 @@ responsibility so that partial failures roll back cleanly.
 
 Locking guarantee (Step 1.1 concurrency requirement)
 -----------------------------------------------------
-create_audit_event() in rise-core/db/models.py issues two
-SELECT … FOR UPDATE statements within the caller's transaction:
+create_audit_event() in rise-core/db/models.py uses the tenant row as the
+serialization boundary within the caller's transaction:
 
   1. SELECT tenant.id … FOR UPDATE  — serialises all writers for this
      tenant, preventing concurrent inserts from computing the same
      prev_hash (fork prevention).
-  2. SELECT audit_events … ORDER BY seq DESC LIMIT 1 FOR UPDATE  — reads
-     the latest chain tail under the lock so the new hash is always based
-     on a stable, committed previous value.
+   2. SELECT audit_events … ORDER BY seq DESC LIMIT 1 — reads the append-only
+      chain tail after the tenant lock is acquired. READ COMMITTED sees the
+      preceding writer's committed tail. No audit-row lock is needed: all
+      writers hold the tenant lock, and rise_app cannot update/delete audit rows.
 
-Because those locks are held until db.commit() (which this helper does NOT
+Because the tenant lock is held until db.commit() (which this helper does NOT
 call), the entire data-mutation + audit-insert pair is protected by the
 tenant-level lock.
 """

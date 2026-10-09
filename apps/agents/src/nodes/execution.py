@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 
 from mcp_client.gateway import MCPGateway
 from mcp_client.hash import compute_action_plan_hash
-from mcp_client.lock import ResourceLockManager, ResourceLockedException
+from mcp_client.lock import ResourceLockManager, ResourceLockedException, ResourceLockUnavailableError
 from schemas.agent_state import ActionPlan, ExecutionLog
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ async def run_execution_agent(
     # un-anchored. This closes the "only enforced when a hash happens to be present"
     # gap on the canonical approval path (ADR-005); default is off, so raw/staging
     # harness callers that never had an anchor are unaffected.
-    if state.get("require_approved_hash") and not approved_hash:
+    if (state.get("require_approved_hash") or state.get("human_approval") == "approved") and not approved_hash:
         err_msg = "Execution requires an approved plan hash anchor, but none was supplied"
         logger.error(err_msg)
         execution_log = ExecutionLog(
@@ -142,7 +142,7 @@ async def run_execution_agent(
             redis_client=redis_client,
             owner_id=state.get("incident_id"),
         )
-    except ResourceLockedException as rle:
+    except (ResourceLockedException, ResourceLockUnavailableError) as rle:
         logger.error("Resource lock failed for '%s': %s", resource_id, rle)
         execution_log = ExecutionLog(
             status="failed",
@@ -152,7 +152,7 @@ async def run_execution_agent(
         ).model_dump()
         new_state["execution_log"] = execution_log
         new_state["error"] = str(rle)
-        new_state["error_code"] = "RESOURCE_LOCKED"
+        new_state["error_code"] = rle.code
         return new_state
 
     # 3. Execute plan steps sequentially via MCP Gateway
@@ -221,7 +221,6 @@ async def run_execution_agent(
 
         # Construct final ExecutionLog outcome
         if steps_completed == steps_total:
-            status = "success"
             result_str = f"Successfully executed all {steps_total} steps in action plan." if steps_total > 0 else "No execution steps required."
             # Check if any PR was created
             for r in step_results:
@@ -236,7 +235,6 @@ async def run_execution_agent(
             if not new_state.get("post_action_metrics"):
                 new_state["post_action_metrics"] = {"health_status": "200 OK", "error_rate": 0.0}
         elif steps_completed > 0:
-            status = "partial"
             execution_log = ExecutionLog(
                 status="partial",
                 steps_completed=steps_completed,
@@ -244,7 +242,6 @@ async def run_execution_agent(
                 error=last_error or "Partial execution aborted on tool failure",
             )
         else:
-            status = "failed"
             execution_log = ExecutionLog(
                 status="failed",
                 steps_completed=0,

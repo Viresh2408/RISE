@@ -29,8 +29,10 @@ from typing import Any, Dict, Optional, Union
 
 import sys
 from pathlib import Path
+from schemas.agent_state import ActionPlan, ActionStep
+from db.runtime import allows_local_fallbacks, deployment_environment
 
-# Add mcp-servers directory paths to sys.path for clean out-of-process/module imports
+# Load the current in-process server adapters (ADR-001).
 _ROOT_DIR = Path(__file__).resolve().parents[3]
 for _server_dir in ["mcp-kubernetes", "mcp-aws", "mcp-github", "mcp-slack"]:
     _p = str(_ROOT_DIR / "packages" / "mcp-servers" / _server_dir)
@@ -68,8 +70,6 @@ except ImportError:
         from packages.mcp_servers.mcp_slack.slack_server import MCPSlackServer  # type: ignore
     except ImportError:
         MCPSlackServer = None  # type: ignore
-
-from schemas.agent_state import ActionPlan, ActionStep
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ class MCPGateway:
         self.default_timeout_seconds = default_timeout_seconds
         self.opa_client = opa_client
 
-        # Isolated MCP Server instances
+        # Separate adapter instances; these share the worker process (ADR-001).
         self.k8s_server = k8s_server or (MCPKubernetesServer() if MCPKubernetesServer else None)
         self.aws_server = aws_server or (MCPAWSServer() if MCPAWSServer else None)
         self.github_server = github_server or (MCPGitHubServer() if MCPGitHubServer else None)
@@ -226,10 +226,10 @@ class MCPGateway:
         if environment == "unauthorized":
             return False
 
-        # In production, automatic unapproved write tool execution is blocked until out-of-process isolation exists
+        # Structural identity/capability check. The deployed transport gate is
+        # independently enforced in dispatch_tool_call below.
         env_norm = environment.lower().strip()
         if env_norm in ("production", "prod") and norm_tool in write_tools:
-            # Must be invoked with human approval or via explicit human-approved flow
             if agent_identity not in ("execution-agent", "orchestrator-agent", "notification-service"):
                 return False
 
@@ -286,6 +286,7 @@ class MCPGateway:
         norm_params = dict(params)
         if "parameters" in norm_params and len(norm_params) == 1 and isinstance(norm_params["parameters"], dict):
             norm_params = norm_params["parameters"]
+
         norm_approved_params = dict(approved_params)
         if "parameters" in norm_approved_params and len(norm_approved_params) == 1 and isinstance(norm_approved_params["parameters"], dict):
             norm_approved_params = norm_approved_params["parameters"]
@@ -311,6 +312,8 @@ class MCPGateway:
     ) -> None:
         """Write an AuditEvent entry to DB for every tool call attempt."""
         if db_session is None:
+            if not allows_local_fallbacks():
+                raise AuditWriteError("An immutable database audit session is required for deployed tool calls")
             logger.info("Audit log [NO_DB_SESSION]: actor=%s action=%s status=%s", actor, action, status)
             return
 
@@ -373,6 +376,8 @@ class MCPGateway:
             ``incident_id`` — honouring the plan-level lock held by the Execution Agent.
         """
         effective_timeout = timeout_seconds if timeout_seconds is not None else self.default_timeout_seconds
+        if db_session is None and not allows_local_fallbacks():
+            raise AuditWriteError("An immutable database audit session is required before deployed tool dispatch")
 
         # Canonicalize tool name & parameters
         norm_tool = "restart_pod" if tool_name == "kubernetes_restart_pod" else tool_name
@@ -381,6 +386,18 @@ class MCPGateway:
             norm_params = norm_params["parameters"]
 
         # Reject write-enabled mocked MCP transports in staging/production
+        if not allows_local_fallbacks() and norm_tool in _WRITE_TOOLS and (
+            deployment_environment() != "staging"
+            or environment.lower().strip() in {"production", "prod"}
+        ):
+            message = "Production or unrecognized-deployment tool writes require process isolation"
+            self._record_audit_event(
+                db_session=db_session, tenant_id=tenant_id, incident_id=incident_id,
+                actor=agent_identity, action=f"DENIED:{norm_tool}", params=norm_params,
+                result=None, status="blocked", error=message,
+            )
+            raise ToolBlockedError(message, reason="isolation_required")
+
         is_prod_staging = environment.lower().strip() in ("production", "prod", "staging")
         if is_prod_staging and self.github_server and getattr(self.github_server, "allow_test_mock", False):
             err_msg = f"Write-enabled mocked MCP transport is strictly rejected in {environment}."
@@ -481,14 +498,41 @@ class MCPGateway:
                 )
                 raise
 
+        # A deployed write must record intent before contacting a tool. Merely
+        # receiving a Session object does not prove the database/audit is writable.
+        if norm_tool in _WRITE_TOOLS and not allows_local_fallbacks():
+            self._record_audit_event(
+                db_session=db_session, tenant_id=tenant_id, incident_id=incident_id,
+                actor=agent_identity, action=f"STARTED:{norm_tool}", params=norm_params,
+                result=None, status="executing",
+            )
+
         # 5. Dispatch to server with per-tool timeout
         async def _execute() -> Dict[str, Any]:
             if norm_tool in ("get_pod_status", "get_pod_logs", "restart_pod", "rollback_deployment", "scale_deployment", "scale", "rollback", "config_update", "get_events"):
+                if self.k8s_server is None:
+                    raise ToolNotImplementedError(
+                        "Kubernetes MCP server is unavailable in this deployment.",
+                        tool_name=norm_tool,
+                        server="mcp-kubernetes",
+                    )
                 eff_tool = "restart_pod" if norm_tool in ("config_update",) else ("scale_deployment" if norm_tool == "scale" else ("rollback_deployment" if norm_tool == "rollback" else norm_tool))
                 return self.k8s_server.handle_tool_call(eff_tool, norm_params)
             elif norm_tool in ("get_cloudwatch_alarms", "get_cloudwatch_logs", "restart_ec2_instance", "invoke_lambda", "update_ssm_parameter", "get_iam_context"):
+                if self.aws_server is None:
+                    raise ToolNotImplementedError(
+                        "AWS MCP server is unavailable in this deployment.",
+                        tool_name=norm_tool,
+                        server="mcp-aws",
+                    )
                 return self.aws_server.handle_tool_call(norm_tool, norm_params)
             elif norm_tool in ("get_recent_commits", "get_pr_diff", "create_branch", "create_pr", "code_fix_pr", "run_workflow", "get_workflow_status"):
+                if self.github_server is None:
+                    raise ToolNotImplementedError(
+                        "GitHub MCP server is unavailable in this deployment.",
+                        tool_name=norm_tool,
+                        server="mcp-github",
+                    )
                 eff_tool = "create_pr" if norm_tool == "code_fix_pr" else norm_tool
                 return self.github_server.handle_tool_call(eff_tool, norm_params)
             elif norm_tool in ("post_message", "post_interactive_approval", "read_thread", "update_message"):

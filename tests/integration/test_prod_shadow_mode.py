@@ -44,7 +44,7 @@ def test_section_6_5_granular_unlock_isolation():
             "id": "pol-001",
             "action_pattern": "restart_pod",
             "environment": "production",
-            "risk_tier": "low",
+            "risk_tier": "medium",
             "requires_approval": False,
             "max_blast_radius": 1,
             "condition": "OOMKill",
@@ -100,6 +100,7 @@ def test_emergency_disable_path():
             "id": "pol-001",
             "action_pattern": "restart_pod",
             "environment": "production",
+            "risk_tier": "medium",
             "requires_approval": False,
             "max_blast_radius": 1,
         }

@@ -1,0 +1,16 @@
+# Prod autoscaling bounds (values-prod.yaml: autoscaling min 3 / max 10 @ 75%
+# CPU). Widens the conservative base HPA.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rise-api
+spec:
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75

@@ -32,6 +32,7 @@ import uuid
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
 
 # ── Env setup BEFORE importing the app ───────────────────────────────────────
 TEST_JWT_SECRET = "test-supabase-secret-rise-unit-tests"
@@ -54,7 +55,7 @@ def visit_UUID(element, compiler, **kw):
     return "TEXT"
 
 from db.base import Base
-from db.models import Tenant, Incident
+from db.models import Tenant, Incident, RemediationAction, RiskPolicy
 from apps.api.src.deps.db import get_db
 from apps.api.src.routers.incidents import _parse_uuid
 
@@ -88,7 +89,10 @@ client = TestClient(app, raise_server_exceptions=False)
 
 TENANT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 INC_ID    = "inc-001"
-ACT_ID    = "act-001"
+ACT_ID    = "22223333-4444-5555-6666-777788889999"
+REJECT_ACT_ID = "22223333-4444-5555-6666-777788889998"
+MODIFY_ACT_ID = "22223333-4444-5555-6666-777788889997"
+POL_ID    = "33334444-5555-6666-7777-888899990000"
 
 
 @pytest.fixture(autouse=True)
@@ -126,6 +130,19 @@ def seed_rbac_db():
             )
             db.add(inc)
 
+    db.flush()
+    for action_id in (ACT_ID, REJECT_ACT_ID, MODIFY_ACT_ID):
+        action = db.get(RemediationAction, uuid.UUID(action_id))
+        if action is None:
+            action = RemediationAction(id=uuid.UUID(action_id), tenant_id=uuid.UUID(TENANT_ID),
+                incident_id=_parse_uuid(INC_ID), action_type="code_fix_pr",
+                action_plan={"action_type": "code_fix_pr"}, risk_tier="critical", status="pending_approval")
+            db.add(action)
+        action.status = "pending_approval"
+        action.action_plan = {"action_type": "code_fix_pr"}
+    if db.get(RiskPolicy, uuid.UUID(POL_ID)) is None:
+        db.add(RiskPolicy(id=uuid.UUID(POL_ID), tenant_id=uuid.UUID(TENANT_ID),
+            action_pattern="rbac-policy-fixture", environment="staging", risk_tier="medium", requires_approval=True))
     db.commit()
     db.close()
     yield
@@ -393,7 +410,7 @@ class TestTenantIdPrecedence:
     When two locations disagree, app_metadata wins.
     """
 
-    def _session_with_payload(self, extra: dict) -> dict:
+    def _session_with_payload(self, extra: dict, expected_status: int = 200) -> dict:
         token = jwt.encode(
             {"sub": "prec-user", "roles": ["viewer"],
              "exp": int(time.mktime((2099, 1, 1, 0, 0, 0, 0, 0, 0))),
@@ -403,63 +420,60 @@ class TestTenantIdPrecedence:
         )
         r = client.post("/api/v1/auth/session",
                         headers={"Authorization": f"Bearer {token}"})
-        assert r.status_code == 200
+        assert r.status_code == expected_status
         return r.json()["data"]
 
     def test_app_metadata_tenant_id_is_used(self):
-        data = self._session_with_payload({"app_metadata": {"tenant_id": "app-meta-tid", "roles": ["viewer"]}})
-        assert data["tenant_id"] == "app-meta-tid"
+        data = self._session_with_payload({"app_metadata": {"tenant_id": TENANT_ID, "roles": ["viewer"]}})
+        assert data["tenant_id"] == TENANT_ID
 
     def test_top_level_tenant_id_used_when_no_app_metadata(self):
-        data = self._session_with_payload({"tenant_id": "top-level-tid"})
-        assert data["tenant_id"] == "top-level-tid"
+        data = self._session_with_payload({"tenant_id": TENANT_ID})
+        assert data["tenant_id"] == TENANT_ID
 
-    def test_user_metadata_tenant_id_used_as_last_resort(self):
-        data = self._session_with_payload({"user_metadata": {"tenant_id": "user-meta-tid"}})
-        assert data["tenant_id"] == "user-meta-tid"
+    def test_user_metadata_cannot_authorize_a_tenant(self):
+        assert self._session_with_payload({"user_metadata": {"tenant_id": TENANT_ID}}, 401) is None
 
     def test_app_metadata_wins_over_top_level_on_conflict(self):
         """app_metadata.tenant_id must beat top-level tenant_id."""
         data = self._session_with_payload({
-            "app_metadata": {"tenant_id": "AUTHORITATIVE", "roles": ["viewer"]},
+            "app_metadata": {"tenant_id": TENANT_ID, "roles": ["viewer"]},
             "tenant_id": "attacker-injected",
         })
-        assert data["tenant_id"] == "AUTHORITATIVE"
+        assert data["tenant_id"] == TENANT_ID
 
     def test_app_metadata_wins_over_user_metadata_on_conflict(self):
         data = self._session_with_payload({
-            "app_metadata": {"tenant_id": "AUTHORITATIVE", "roles": ["viewer"]},
+            "app_metadata": {"tenant_id": TENANT_ID, "roles": ["viewer"]},
             "user_metadata": {"tenant_id": "user-meta-tid"},
         })
-        assert data["tenant_id"] == "AUTHORITATIVE"
+        assert data["tenant_id"] == TENANT_ID
 
     def test_top_level_wins_over_user_metadata_on_conflict(self):
         """Top-level tenant_id beats user_metadata when app_metadata has none."""
         data = self._session_with_payload({
-            "tenant_id": "TOP-LEVEL",
+            "tenant_id": TENANT_ID,
             "user_metadata": {"tenant_id": "user-meta-tid"},
         })
-        assert data["tenant_id"] == "TOP-LEVEL"
+        assert data["tenant_id"] == TENANT_ID
 
-    def test_fallback_sentinel_when_no_tenant_claims(self):
-        """When no tenant_id claim exists, the sentinel UUID is returned."""
-        data = self._session_with_payload({})  # no tenant anywhere
-        assert data["tenant_id"] == "00000000-0000-0000-0000-000000000001"
+    def test_missing_tenant_claims_are_rejected(self):
+        assert self._session_with_payload({}, 401) is None
 
     def test_empty_string_app_metadata_tenant_id_falls_through(self):
         """An empty string in app_metadata.tenant_id is not treated as a value."""
         data = self._session_with_payload({
             "app_metadata": {"tenant_id": "", "roles": ["viewer"]},
-            "tenant_id": "top-level-tid",
+            "tenant_id": TENANT_ID,
         })
-        assert data["tenant_id"] == "top-level-tid"
+        assert data["tenant_id"] == TENANT_ID
 
-    def test_empty_top_level_falls_through_to_user_metadata(self):
+    def test_empty_top_level_does_not_trust_user_metadata(self):
         data = self._session_with_payload({
             "tenant_id": "",
             "user_metadata": {"tenant_id": "user-meta-tid"},
-        })
-        assert data["tenant_id"] == "user-meta-tid"
+        }, 401)
+        assert data is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -473,7 +487,7 @@ class TestTenantIdPrecedence:
 # url_template tokens: {inc} = INC_ID, {act} = ACT_ID, {pol} = policy ID, {run} = agent run ID
 _INC = INC_ID
 _ACT = ACT_ID
-_POL = "pol-001"
+_POL = POL_ID
 _RUN = "run-001"
 
 ENDPOINT_ROLE_TABLE: list[tuple] = [
@@ -497,8 +511,8 @@ ENDPOINT_ROLE_TABLE: list[tuple] = [
     ("GET",    f"/api/v1/incidents/{_INC}/decision",                "viewer",   None,                                                                               {},         200),
     ("GET",    f"/api/v1/incidents/{_INC}/actions",                 "viewer",   None,                                                                               {},         200),
     ("POST",   f"/api/v1/incidents/{_INC}/actions/{_ACT}/approve",  "approver", {},                                                                                 {"Idempotency-Key":"ik-approve-01"}, 200),
-    ("POST",   f"/api/v1/incidents/{_INC}/actions/{_ACT}/reject",   "approver", {"reason":"too risky"},                                                             {},         200),
-    ("POST",   f"/api/v1/incidents/{_INC}/actions/{_ACT}/modify",   "approver", {"modified_plan":{"id":"p1","description":"revised","steps":["step1"]}},            {},         200),
+    ("POST",   f"/api/v1/incidents/{_INC}/actions/{REJECT_ACT_ID}/reject",   "approver", {"reason":"too risky"},                                                    {"Idempotency-Key":"ik-reject-01"}, 200),
+    ("POST",   f"/api/v1/incidents/{_INC}/actions/{MODIFY_ACT_ID}/modify",   "approver", {"modified_plan":{"id":"p1","description":"revised","steps":["step1"]}},   {"Idempotency-Key":"ik-modify-01"}, 200),
     # ── Verification ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     ("GET",    f"/api/v1/incidents/{_INC}/verification",            "viewer",   None,                                                                               {},         200),
     # ── Knowledge ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -527,7 +541,7 @@ _ENDPOINT_IDS = [
 ]
 
 
-def _call(method: str, url: str, headers: dict, body) -> "Response":  # type: ignore[name-defined]
+def _call(method: str, url: str, headers: dict, body) -> Response:
     """Issue an HTTP call with optional JSON body."""
     if method == "GET":
         return client.get(url, headers=headers)
@@ -836,11 +850,11 @@ class TestRoleTierAcceptance:
         r = client.post(f"/api/v1/incidents/{_INC}/actions/{_ACT}/approve",
                         headers={**APPROVER_HEADERS,"Idempotency-Key":"ik-apr-01"}, json={})
         assert r.status_code == 200
-        r = client.post(f"/api/v1/incidents/{_INC}/actions/{_ACT}/reject",
-                        headers=APPROVER_HEADERS, json={"reason":"r"})
+        r = client.post(f"/api/v1/incidents/{_INC}/actions/{REJECT_ACT_ID}/reject",
+                        headers={**APPROVER_HEADERS,"Idempotency-Key":"ik-rej-access"}, json={"reason":"r"})
         assert r.status_code == 200
-        r = client.post(f"/api/v1/incidents/{_INC}/actions/{_ACT}/modify",
-                        headers=APPROVER_HEADERS,
+        r = client.post(f"/api/v1/incidents/{_INC}/actions/{MODIFY_ACT_ID}/modify",
+                        headers={**APPROVER_HEADERS,"Idempotency-Key":"ik-mod-access"},
                         json={"modified_plan":{"id":"p1","description":"d","steps":[]}})
         assert r.status_code == 200
 
@@ -987,4 +1001,3 @@ class TestCrossTenantIncidentIsolation:
         r = client.get(f"/api/v1/incidents/{foreign_id}", headers=headers)
         assert r.status_code == 200, r.text
         assert foreign_id in r.text
-

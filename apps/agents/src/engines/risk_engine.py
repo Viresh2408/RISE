@@ -11,6 +11,8 @@ import logging
 from typing import Any, Dict, List, Optional
 import httpx
 from pydantic import BaseModel, Field
+from db.runtime import allows_local_fallbacks, deployment_environment
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +44,12 @@ class RiskEngine:
 
     def __init__(
         self,
-        opa_base_url: str = "http://localhost:8181",
+        opa_base_url: Optional[str] = None,
         timeout: float = 2.0,
     ) -> None:
-        self.opa_base_url = opa_base_url.rstrip("/")
+        self.opa_base_url = str(
+            opa_base_url or os.environ.get("OPA_URL", "http://localhost:8181")
+        ).rstrip("/")
         self.timeout = timeout
 
     @staticmethod
@@ -130,8 +134,28 @@ class RiskEngine:
                 return self._fail_closed("OPA response missing policy packages")
 
             risk_tier = str(risk_tiers_res.get("risk_level", "critical")).lower()
-            requires_approval = bool(approval_rules_res.get("requires_approval", True))
+            requires_approval = approval_rules_res.get("requires_approval", True)
+            if risk_tier not in {"low", "medium", "high", "critical"} or not isinstance(requires_approval, bool):
+                return self._fail_closed("OPA returned invalid risk tier or approval decision")
             reasons = list(approval_rules_res.get("reasons", []))
+
+            # A permissive OPA result is insufficient without an administrator's
+            # persisted, exactly scoped policy. Check its limits independently.
+            if not self._policy_permits_auto(
+                active_policies, action_type, environment, risk_tier, confidence,
+                blast_radius_count, min_confidence, max_blast_radius,
+            ):
+                requires_approval = True
+                reasons.append("Automatic execution remains in shadow mode: no matching active policy permits it within its limits")
+            if action_type == "code_fix_pr" or (environment == "production" and risk_tier == "high"):
+                requires_approval = True
+            if environment in {"production", "prod"} or (
+                not allows_local_fallbacks() and deployment_environment() != "staging"
+            ):
+                # The current dispatch transport is in-process (ADR-001). Real
+                # production autonomy cannot be authorized until isolation exists.
+                requires_approval = True
+                reasons.append("Production automatic execution requires an isolated tool transport")
 
             # Code-level un-overridable guardrail: risk_tier=critical ALWAYS forces requires_approval=True
             if risk_tier == "critical":
@@ -168,6 +192,8 @@ class RiskEngine:
         active_policies: Optional[List[Dict[str, Any]]] = None,
     ) -> RiskEvaluation:
         """Local pure-Python fallback evaluation matching OPA Rego rules when OPA service is not running in local test environment."""
+        if not allows_local_fallbacks():
+            return self._fail_closed("Local policy fixtures are forbidden in deployed environments")
         critical_actions = {"delete_database", "drop_table", "force_destroy", "code_fix_pr", "destroy_cluster"}
         high_actions = {
             "rollback_deployment", "failover_database", "modify_traffic", "scale_deployment",
@@ -217,34 +243,13 @@ class RiskEngine:
             # Unmapped action types default to critical (default-deny)
             risk_tier = "critical"
 
-        # Evaluate approval rules
         reasons = []
-        requires_approval = True
-
-        has_matching_prod_auto_approval_policy = False
-        if active_policies:
-            for pol in active_policies:
-                pol_action = pol.get("action_pattern") or pol.get("action_type")
-                pol_env = pol.get("environment")
-                pol_req_appr = pol.get("requires_approval", True)
-                pol_max_blast = pol.get("max_blast_radius", max_blast_radius)
-                if pol_action == action_type and pol_env == "production" and not pol_req_appr:
-                    if blast_radius_count <= pol_max_blast:
-                        has_matching_prod_auto_approval_policy = True
-                        break
-
-        if environment != "production":
-            if risk_tier == "low" and confidence >= min_confidence and blast_radius_count <= max_blast_radius:
-                requires_approval = False
-            elif risk_tier == "medium" and confidence >= min_confidence and blast_radius_count <= max_blast_radius:
-                requires_approval = False
-        else:
-            if has_matching_prod_auto_approval_policy and risk_tier not in ("critical", "high") and confidence >= min_confidence and blast_radius_count <= max_blast_radius:
-                requires_approval = False
-            else:
-                requires_approval = True
-                if not has_matching_prod_auto_approval_policy:
-                    reasons.append("Production auto-remediation locked in shadow mode — no active policy permits auto-approval for this action type")
+        requires_approval = not self._policy_permits_auto(
+            active_policies, action_type, environment, risk_tier, confidence,
+            blast_radius_count, min_confidence, max_blast_radius,
+        )
+        if requires_approval:
+            reasons.append("Automatic execution remains in shadow mode: no matching active policy permits it within its limits")
 
         if risk_tier == "critical":
             requires_approval = True
@@ -273,8 +278,28 @@ class RiskEngine:
             risk_tier=risk_tier,
             requires_approval=requires_approval,
             reasons=reasons,
-            opa_reachable=True,
+            opa_reachable=False,
         )
+
+    @staticmethod
+    def _policy_permits_auto(
+        policies, action_type, environment, risk_tier, confidence,
+        blast_radius_count, min_confidence, max_blast_radius,
+    ) -> bool:
+        if risk_tier not in {"low", "medium"} or environment not in {"production", "staging", "dev"}:
+            return False
+        for policy in policies or []:
+            if (
+                policy.get("active", True) is True
+                and policy.get("action_pattern") == action_type
+                and policy.get("environment") == environment
+                and policy.get("risk_tier") == risk_tier
+                and policy.get("requires_approval") is False
+                and confidence >= max(min_confidence, float(policy.get("min_confidence", 0.90)))
+                and blast_radius_count <= min(max_blast_radius, int(policy.get("max_blast_radius", 1)))
+            ):
+                return True
+        return False
 
     def _fail_closed(self, reason: str) -> RiskEvaluation:
         """Construct fail-closed risk evaluation."""

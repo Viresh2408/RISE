@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Navbar } from '../../components/navbar';
 import { CardSkeleton } from '../../components/shared/CardSkeleton';
@@ -21,51 +21,8 @@ import {
   X,
   Link2,
   Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
-
-/* Fallback demo knowledge entries */
-const DEMO_ENTRIES: KnowledgeDTO[] = [
-  {
-    id: 'kb-001',
-    title: 'Postgres Connection Pool Exhaustion Runbook',
-    content: `When the connection pool is exhausted, all incoming DB requests will queue or fail.
-
-## Remediation Steps
-1. Run SELECT count(*) FROM pg_stat_activity; to check active connections
-2. Identify long-running idle connections
-3. Terminate idle connections if query_start < NOW() - INTERVAL '5 minutes'
-4. Increase max_connections in postgresql.conf if necessary and reload`,
-    service: 'db-cluster',
-    tags: ['postgres', 'connections', 'critical', 'database'],
-    created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
-  },
-  {
-    id: 'kb-002',
-    title: 'Auth Service JWT Token Cache Miss Storm',
-    content: `A cache miss storm occurs when the Redis JWT validation cache is evicted en masse.
-
-## Remediation Steps
-1. Increase Redis maxmemory via CONFIG SET
-2. Set maxmemory-policy allkeys-lru
-3. Warm cache with synthetic requests`,
-    service: 'auth-service',
-    tags: ['redis', 'jwt', 'cache', 'auth'],
-    created_at: new Date(Date.now() - 7 * 86400000).toISOString(),
-  },
-  {
-    id: 'kb-003',
-    title: 'Kubernetes Pod OOMKilled Recovery',
-    content: `Pod restart loop due to exit code 137 (OOMKilled).
-
-## Steps
-1. Check limits: kubectl describe pod <name>
-2. Increase memory limit in deployment spec
-3. Apply: kubectl rollout restart deployment/<name>`,
-    service: 'api-gateway',
-    tags: ['kubernetes', 'oom', 'memory', 'pods'],
-    created_at: new Date(Date.now() - 14 * 86400000).toISOString(),
-  },
-];
 
 export default function KnowledgePage() {
   const { session, hasRole } = useAuth();
@@ -84,10 +41,11 @@ export default function KnowledgePage() {
   const [newTagsStr, setNewTagsStr] = useState('');
   const [newService, setNewService] = useState('auth-service');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const canAdd = hasRole('engineer');
 
-  const fetchKnowledge = async () => {
+  const fetchKnowledge = useCallback(async () => {
     if (!session?.token) return;
     setLoading(true);
 
@@ -96,28 +54,29 @@ export default function KnowledgePage() {
         q: searchQuery.trim() || undefined,
         tags: selectedTag || undefined,
       });
-      setEntries(data || DEMO_ENTRIES);
+      setEntries(data || []);
       setError(null);
     } catch (err: any) {
       setError(err.message || 'Failed to load runbooks');
-      setEntries(DEMO_ENTRIES);
+      setEntries([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [session, searchQuery, selectedTag]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchKnowledge();
     }, 300);
     return () => clearTimeout(timer);
-  }, [session, searchQuery, selectedTag]);
+  }, [fetchKnowledge]);
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session?.token || !newTitle.trim()) return;
 
     setCreating(true);
+    setCreateError(null);
     try {
       const tagsArray = newTagsStr.split(',').map((t) => t.trim()).filter(Boolean);
       await apiClient.createKnowledge(session.token, {
@@ -132,7 +91,7 @@ export default function KnowledgePage() {
       setNewTagsStr('');
       fetchKnowledge();
     } catch (err: any) {
-      alert(`Failed to save runbook: ${err.message}`);
+      setCreateError(err.message || 'Failed to save runbook');
     } finally {
       setCreating(false);
     }
@@ -170,7 +129,7 @@ export default function KnowledgePage() {
 
             {canAdd && (
               <button
-                onClick={() => setShowCreateModal(true)}
+                onClick={() => { setCreateError(null); setShowCreateModal(true); }}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#4C2A85] px-4 py-2 text-xs font-semibold text-[#FAF7F2] hover:bg-[#8B5CF6] transition-colors shadow-md"
               >
                 <Plus className="w-4 h-4" />
@@ -227,10 +186,23 @@ export default function KnowledgePage() {
           )}
         </div>
 
+        {/* Honest load-failure surface. `error` was previously stored in state
+            but never rendered, so a failed fetch fell through to the "no
+            results" empty state and looked like a successful empty search. */}
+        {error && !loading && (
+          <div className="flex items-start gap-3 rounded-xl border border-[#EF4444]/30 bg-[#EF4444]/10 p-4 text-[#EF4444]">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold">Failed to load runbooks</p>
+              <p className="text-xs font-mono mt-0.5 text-[#0E0B14]/70">{error}</p>
+            </div>
+          </div>
+        )}
+
         {/* Content Grid */}
         {loading ? (
           <CardSkeleton count={3} variant="knowledge" theme="light" />
-        ) : entries.length === 0 ? (
+        ) : error ? null : entries.length === 0 ? (
           <EmptyState
             icon={BookOpen}
             title="No knowledge entries match your search"
@@ -302,7 +274,7 @@ export default function KnowledgePage() {
                 <h3 className={tx('sectionHeader', 'text-[#0E0B14] normal-case text-lg font-semibold')}>
                   Curate New Knowledge Base Runbook
                 </h3>
-                <button onClick={() => setShowCreateModal(false)} className="text-[#6B6560] hover:text-[#0E0B14]">
+                <button onClick={() => { setShowCreateModal(false); setCreateError(null); }} className="text-[#6B6560] hover:text-[#0E0B14]">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -355,10 +327,17 @@ export default function KnowledgePage() {
                   />
                 </div>
 
+                {createError && (
+                  <div className="flex items-start gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3 text-xs font-mono text-[#EF4444]">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <span>{createError}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]">
                   <button
                     type="button"
-                    onClick={() => setShowCreateModal(false)}
+                    onClick={() => { setShowCreateModal(false); setCreateError(null); }}
                     className="rounded-lg border border-[#E8E2D9] px-4 py-2 text-xs font-semibold text-[#0E0B14] hover:bg-[#FAF7F2]"
                   >
                     Cancel

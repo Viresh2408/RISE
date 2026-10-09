@@ -31,8 +31,8 @@ Tenant-ID Claim Precedence (deterministic, documented)
 Tenant ID is extracted in this fixed order; the first non-empty value wins:
   1. app_metadata.tenant_id  — primary location for Supabase custom claims
   2. tenant_id               — top-level claim (used in test tokens / simple setups)
-  3. user_metadata.tenant_id — secondary Supabase metadata bucket
-  4. fallback sentinel UUID  — "00000000-0000-0000-0000-000000000001"
+  Missing or malformed trusted tenant claims are rejected. End-user-writable
+  user_metadata is never an authorization source.
 
 If two locations carry conflicting values, app_metadata.tenant_id wins.
 This order is tested explicitly in test_auth_rbac.py::TestTenantIdPrecedence.
@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import os
 import logging
+import uuid
 from typing import Callable, Optional
 
 import jwt
@@ -136,8 +137,8 @@ def _extract_tenant_id(payload: dict) -> str:
     Precedence order (first non-empty string wins):
       1. app_metadata.tenant_id  — primary custom-claim location in Supabase.
       2. tenant_id               — top-level claim (test tokens / simple setups).
-      3. user_metadata.tenant_id — secondary Supabase metadata bucket.
-      4. _TENANT_FALLBACK        — sentinel UUID, never a real tenant.
+      Missing claims return an internal sentinel that get_current_user rejects.
+      user_metadata is end-user writable and cannot grant tenant access.
 
     If a malicious or malformed token carries different values in two of these
     locations, app_metadata always wins because it requires service-role
@@ -157,14 +158,8 @@ def _extract_tenant_id(payload: dict) -> str:
     if val:
         return str(val)
 
-    # 3. user_metadata.tenant_id (lowest trust — end-user writable in Supabase)
-    user_meta = payload.get("user_metadata", {})
-    if isinstance(user_meta, dict):
-        val = user_meta.get("tenant_id", "")
-        if val:
-            return str(val)
-
-    # 4. Fallback sentinel — signals "no tenant configured" to downstream code.
+    # End users may edit user_metadata in Supabase. It is not an authorization
+    # source, even when no higher-trust tenant claim was provided.
     return _TENANT_FALLBACK
 
 
@@ -335,6 +330,12 @@ async def get_current_user(
 
     roles = _extract_roles(payload)
     tenant_id = _extract_tenant_id(payload)
+    if tenant_id == _TENANT_FALLBACK:
+        raise HTTPException(401, detail={"code": "UNAUTHORIZED", "message": "A trusted tenant claim is required", "details": {}})
+    try:
+        tenant_id = str(uuid.UUID(tenant_id))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(401, detail={"code": "UNAUTHORIZED", "message": "Invalid tenant identity", "details": {}}) from exc
 
     return UserContext(user_id=user_id, roles=roles, tenant_id=tenant_id)
 

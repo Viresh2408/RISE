@@ -82,12 +82,13 @@ class GatewayConfig(BaseModel):
            (Ollama only included if OLLAMA_BASE_URL is set).
         """
         json_blob = os.environ.get("LLM_GATEWAY_CONFIG_JSON", "").strip()
+        providers: list[ProviderConfig]
         if json_blob:
             raw = json.loads(json_blob)
             providers = [ProviderConfig(**p) for p in raw]
             return cls(providers=providers)
 
-        providers: list[ProviderConfig] = []
+        providers = []
 
         def _clean_env(var_name: str) -> str:
             val = os.environ.get(var_name, "").strip()

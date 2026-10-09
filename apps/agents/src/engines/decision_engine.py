@@ -18,6 +18,7 @@ SYSTEM BOUNDARY & ARCHITECTURAL NOTE:
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -60,7 +61,6 @@ class DecisionEngine:
         """Execute full decision pipeline across all sub-engines."""
         root_cause = state.get("root_cause") or {}
         impact_assessment = state.get("impact_assessment") or {}
-        incident_context = state.get("incident_context") or state.get("context") or {}
 
         # 1. Similarity Engine: find relevant past incident resolutions
         sim_result: SimilarityResult = self.similarity_engine.evaluate_similarity(state)
@@ -98,13 +98,33 @@ class DecisionEngine:
             )
 
         # Extract parameters for Risk and Confidence evaluation
-        confidence = float(root_cause.get("confidence", 0.95 if existing_plan else 0.0))
+        # A pre-existing plan is not evidence of a diagnosis. Missing RCA evidence
+        # must not become an invented 95% confidence that authorizes automation.
+        confidence = float(root_cause.get("confidence", 0.0))
         action_type = action_plan.action_type
         environment = state.get("environment") or (state.get("event_payload") or {}).get("environment") or (state.get("context") or {}).get("environment") or ("staging" if existing_plan else "production")
 
         blast_radius_services = impact_assessment.get("blast_radius_services") or state.get("blast_radius_services") or []
         blast_radius_count = len(blast_radius_services)
         service_criticality = state.get("service_criticality", "normal")
+        active_policies = []
+        if db is not None:
+            from sqlalchemy import select
+            from db.models import RiskPolicy as StoredRiskPolicy
+
+            # Never accept policy authorization supplied in an incident payload.
+            policies = db.execute(select(StoredRiskPolicy).where(
+                StoredRiskPolicy.tenant_id == uuid.UUID(str(state["tenant_id"])),
+                StoredRiskPolicy.active.is_(True),
+                StoredRiskPolicy.action_pattern == action_type,
+                StoredRiskPolicy.environment == environment,
+            )).scalars().all()
+            active_policies = [{
+                "action_pattern": p.action_pattern, "environment": p.environment,
+                "risk_tier": p.risk_tier, "requires_approval": p.requires_approval,
+                "max_blast_radius": p.max_blast_radius, "min_confidence": p.min_confidence,
+                "active": p.active, "id": str(p.id), "version": p.version,
+            } for p in policies]
 
         # 3. Risk Engine: evaluate risk tier and approval rules against OPA
         if use_local_risk_fallback:
@@ -114,6 +134,7 @@ class DecisionEngine:
                 blast_radius_count=blast_radius_count,
                 confidence=confidence,
                 service_criticality=service_criticality,
+                active_policies=active_policies,
             )
         else:
             risk_eval = await self.risk_engine.evaluate_risk(
@@ -123,6 +144,7 @@ class DecisionEngine:
                 confidence=confidence,
                 service_criticality=service_criticality,
                 opa_client=opa_client,
+                active_policies=active_policies,
             )
 
         # 4. Confidence Engine: evaluate confidence against risk policy threshold
@@ -187,4 +209,3 @@ class DecisionEngine:
             action_plan=action_plan,
             is_simulated=is_simulated,
         )
-

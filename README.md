@@ -55,6 +55,19 @@
 
 ---
 
+> **⚠️ Implementation Status — Current vs. Target** *(status note added 2026-09-29)*
+>
+> This README describes the system's **target architecture**. Several flows are implemented and working; several are not yet wired end-to-end. The list below is the honest current state; the architecture diagrams further down are **target state** and are captioned as such where they outrun the implementation.
+>
+> - **Alert-triggered autonomous execution is not wired.** Webhook ingestion persists events and publishes to a Redis Stream (`stream:events`), but there is **no consumer** and `AUTO_RUN_AGENT_GRAPH` defaults **off**, so an incoming alert does not currently start the agent graph on its own. The graph runs when invoked explicitly (e.g. via the API/eval).
+> - **The auto-executed real-PR path commits a templated patch, not an LLM diff.** `commit_remediation_to_github` fetches the real file, then edits it with `apply_patch_to_text` (keyword/filename-matched replacements + a comment-prepend fallback) — **no LLM call and no patch-validator** on this path. The grounded, validated LLM diff exists only in the **agent-graph path**, which today routes to the `mcp-github` **simulation** fixture. Bridging the grounded diff into the real write path is tracked as **P0-1 (pending)**.
+> - **MCP tool servers run in-process, not as isolated daemons** (ADR-001). `kubernetes`, `aws`, `github`, and `slack` are wired in-process; `observability` and `knowledge` are **not implemented** (README-only stub directories — the gateway allow-lists their tools but raises a not-implemented error if one is dispatched). Vector-knowledge retrieval is a **separate in-process service** (`packages/rise-core/knowledge_service/`), not an MCP server.
+> - **Policy enforcement is two layers, and the MCP-gateway layer is not OPA** (ADR-002). Real OPA/Rego evaluation runs **upstream in the Risk Engine**; the MCP gateway applies a **static Python allow-list** (`evaluate_python_allowlist`) as defense-in-depth. Execution-time OPA in the tool path is target state.
+> - **Some remediation actions are simulated, and post-action metrics are sentinels.** Security actions (e.g. `block_ip_address`, `isolate_host`, `revoke_session_token`) are audited no-ops, and the `approve_action` path feeds **hardcoded** `post_action_metrics` (`health_status: "200 OK"`, `error_rate: 0.0`) into verification rather than fetching live telemetry.
+> - **LLM providers are Groq, OpenAI, Gemini, and Ollama only.** There is **no Anthropic/Claude or AWS Bedrock adapter** (`llm_gateway/providers.py`); any Bedrock reference below is aspirational.
+> - **The `apps/agents` container is liveness-only** (it compiles the graph as a fail-loud check and serves `/healthz`; it does not accept incident traffic), and **Celery runs a single SLA-timeout beat task**, not LangGraph worker pods.
+> - The **"560+ tests"** figure cited below is **unverified in this audit** — run the suite to confirm before relying on it.
+
 ## What RISE Actually Does
 
 Engineering teams lose time to a repetitive loop: an alert fires, an engineer wakes up (or drops what they're doing), digs through logs and metrics across five different tools, forms a hypothesis, checks it, writes a fix, and deploys it — often **45+ minutes end to end**, for problems that are frequently the same handful of root causes recurring across services.
@@ -79,9 +92,9 @@ Most "AI incident response" projects stop at "an LLM reads the logs and suggests
 
 Concretely, this project enforces:
 
-- **No code fix is ever generated without the LLM seeing the real, current file content first.** If the exact file can't be fetched from GitHub, the LLM is never called for that fix — the incident is routed to a human with an honest "no verified fix available" message. There is no fallback path that fabricates a plausible-looking diff.
+- **No code fix is ever generated without the LLM seeing the real, current file content first.** If the exact file can't be fetched from GitHub, the LLM is never called for that fix — the incident is routed to a human with an honest "no verified fix available" message. There is no fallback path that fabricates a plausible-looking diff. *(Scope: this is the **agent-graph grounded path**. The **auto-executed real-PR path** — `commit_remediation_to_github` — currently commits a **templated** patch via `apply_patch_to_text` and does **not** call an LLM; bridging the grounded diff into that path is tracked as **P0-1, pending**. See the status note at the top.)*
 
-- **Every generated patch is programmatically validated against the real file before a PR opens.** A diff with wrong line numbers or non-existent code is rejected and never reaches GitHub.
+- **Every generated patch is programmatically validated against the real file before a PR opens.** A diff with wrong line numbers or non-existent code is rejected and never reaches GitHub. *(Scope: the patch validator runs on the **agent-graph path**. The templated `apply_patch_to_text` output on the current real-PR path is not validator-checked — also P0-1.)*
 
 - **The system cannot mark a remediation "successful" without independently re-checking the real system of record.** A PR is only considered real once RISE calls GitHub's API back and confirms it's genuinely open — not because the creation call didn't throw an error.
 
@@ -92,6 +105,8 @@ Concretely, this project enforces:
 ---
 
 ## System Architecture
+
+> *Target architecture.* Some nodes and edges below are not yet wired end-to-end — see the status note at the top of this README (in-process MCP per ADR-001, no `stream:events` consumer, templated real-PR patch, allow-list vs. execution-time OPA).
 
 ```mermaid
 flowchart TB
@@ -161,6 +176,8 @@ flowchart TB
 
 ## Multi-Agent Orchestration Flow
 
+> *Target orchestration.* The graph is not auto-triggered by inbound alerts today (no `stream:events` consumer; `AUTO_RUN_AGENT_GRAPH` defaults off) — it runs when invoked explicitly. See the status note at the top.
+
 ```mermaid
 flowchart TD
     A["Webhook Ingestion<br/>Alertmanager / GitHub / Slack / CloudWatch"] --> B["Signature Verification & Dedup"]
@@ -206,6 +223,8 @@ To align RISE's multi-agent orchestration graph with standard security operation
 
 Every proposed fix is traceable end-to-end through a single queryable evidence chain — no step is re-derived or summarized by an LLM at display time; the dashboard renders exactly what was fetched and decided.
 
+> *Scope:* this evidence chain and the patch-validator step below describe the **agent-graph remediation path**. The auto-executed real-PR path commits a templated patch with no LLM/validator (P0-1) — see the status note at the top.
+
 ```mermaid
 sequenceDiagram
     participant Src as Alert Source
@@ -244,6 +263,8 @@ sequenceDiagram
 ---
 
 ## Deployment Architecture
+
+> *Target deployment topology.* Today the `apps/agents` container is **liveness-only** (compiles the graph, serves `/healthz`; no incident traffic), Celery runs a **single SLA-timeout beat task** (not LangGraph worker pods), MCP servers run **in-process** rather than as isolated pods (ADR-001), and the Bedrock edge is aspirational (no Bedrock adapter). See the status note at the top.
 
 ```mermaid
 flowchart TB
@@ -285,7 +306,7 @@ flowchart TB
         GRQ[Groq]
         GEM[Gemini]
         OAI[OpenAI]
-        BR[AWS Bedrock]
+        BR["AWS Bedrock (target — adapter not implemented)"]
         GH[GitHub]
         SLK[Slack]
     end
@@ -402,7 +423,7 @@ Then open:
 | `QDRANT_API_KEY` | Optional, for hosted Qdrant | — |
 | `GEMINI_API_KEY` | Primary reasoning model | `AIzaSy...` |
 | `OPENAI_API_KEY` | Fallback reasoning model | `sk-...` |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | Bedrock & CloudWatch | — |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | CloudWatch (Bedrock is target state — no Bedrock adapter is implemented today; see the status note at the top) | — |
 | `OLLAMA_BASE_URL` | Self-hosted local LLM (dev/offline) | `http://localhost:11434` |
 | `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY` | GitHub App auth (preferred) | — |
 | `GITHUB_TOKEN` | PAT fallback — requires `repo` or fine-grained `contents:write` + `pull_requests:write` | `ghp_...` / `github_pat_...` |
@@ -436,6 +457,8 @@ curl -X PUT "http://localhost:8000/api/v1/policies/{policy_id}" \
 ```
 
 ### Grounded, Verified Remediation — Not LLM Approximation
+
+> *Scope:* the grounding and patch-validation guarantees in this section describe the **agent-graph remediation path**. The **auto-executed real-PR path** (`commit_remediation_to_github`) currently commits a **templated** patch (`apply_patch_to_text`) with **no LLM and no patch validator**; bridging the grounded, validated diff into that path is **P0-1 (pending)**. See the status note at the top of this README.
 
 - Code fixes are only generated when the LLM has been shown the **real, current file content** fetched from GitHub. If that fetch fails, the fix is not generated — the incident routes to a human with an honest "no verified fix available" message.
 - Every generated diff is **programmatically validated** (applies cleanly against the real file, passes a syntax check) before a PR is opened.
@@ -554,6 +577,11 @@ Documented honestly rather than omitted:
 | **MCP server process isolation** | Not yet implemented. Tool servers run in-process within the agent worker rather than as separately-credentialed, sandboxed processes. Safety today relies on the allow-list middleware, OPA policy checks, and plan-hash verification rather than process-level isolation. **Planned:** split each MCP server into its own pod with its own scoped IAM/credentials. |
 | **Single-tenant deployment model** | The schema is tenant-ready (RLS, `tenant_id` scoping throughout), but multi-tenant SaaS operation has not been exercised end-to-end. |
 | **Shadow-mode burn-in** | Currently a manual, human-reviewed process — not yet automated with statistical confidence thresholds for auto-promotion. |
+| **Alert-triggered autonomous pipeline** | Not yet wired. Webhooks persist events and publish to the `stream:events` Redis Stream, but there is no consumer and `AUTO_RUN_AGENT_GRAPH` defaults off, so alerts do not auto-start the agent graph. **Planned:** a stream consumer that launches the graph (P0-2). |
+| **Grounded/validated diff on the real-PR path** | Not yet connected. `commit_remediation_to_github` commits a templated `apply_patch_to_text` patch (no LLM, no patch validator); the grounded, validated diff lives only in the agent-graph path (which routes to the `mcp-github` simulation). **Planned:** bridge the grounded diff into the real write path (P0-1). |
+| **Observability & Knowledge MCP servers** | Not implemented — README-only stub directories with no server module; the gateway allow-lists their tools but raises a not-implemented error if one is dispatched. Vector-knowledge retrieval is a separate in-process service, not an MCP server. |
+| **Simulated actions & post-remediation metrics** | Security actions (e.g. `block_ip_address`, `isolate_host`) are audited no-ops, and the `approve_action` path feeds hardcoded sentinel `post_action_metrics` into verification rather than live telemetry. |
+| **LLM provider coverage** | Groq, OpenAI, Gemini, and Ollama only — no Anthropic/Claude or AWS Bedrock adapter. |
 
 ---
 

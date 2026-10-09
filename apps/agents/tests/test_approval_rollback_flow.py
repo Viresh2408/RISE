@@ -12,6 +12,7 @@ Matches Definition of Done and user requirements:
 """
 
 import uuid
+import pytest
 from unittest.mock import patch
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -29,6 +30,8 @@ from apps.api.src.services.approval_lock import (
     reset_approval_locks_for_testing,
 )
 from apps.api.src.tasks import evaluate_sla_timeouts
+
+pytestmark = pytest.mark.usefixtures("offline_agent_io")
 
 
 def test_verification_failure_triggers_auto_rollback_and_escalates():

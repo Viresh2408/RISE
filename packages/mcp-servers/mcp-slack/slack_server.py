@@ -6,16 +6,18 @@ Exposes Slack integration tools per mcp.md §2:
 - `read_thread`
 - `update_message`
 
-NOTE (project stage): this server is a SIMULATED facade. Every handler returns a
-deterministic fixture payload; `bot_token` is accepted but currently unused — no real
-Slack Web API call is made. Interactive approval cards still match prompts.md §9
-field-for-field so downstream formatting/verification is exercised. Wiring real sends
-(slack_sdk WebClient / chat.postMessage) is intentionally out of scope for this stage.
+Supports the real Slack Web API (``slack_sdk.WebClient``) when a bot token is present
+AND slack_sdk is importable, and falls back to a deterministic fixture payload otherwise
+— mirroring ``mcp-kubernetes`` so the unit suite stays hermetic. Interactive approval
+cards match prompts.md §9 field-for-field regardless of transport, so downstream
+formatting/verification is exercised in both modes; any real-call failure is logged and
+falls through to the fixture rather than raising.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -146,10 +148,29 @@ def format_slack_approval_card(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class MCPSlackServer:
-    """Isolated MCP Slack Server."""
+    """Isolated MCP Slack Server (real slack_sdk with fixture fallback)."""
 
     def __init__(self, bot_token: Optional[str] = None):
-        self.bot_token = bot_token
+        self.bot_token = bot_token or os.environ.get("SLACK_BOT_TOKEN")
+        self._client: Optional[Any] = None
+        self._slack_available = False
+        self._init_slack_client()
+
+    def _init_slack_client(self) -> None:
+        """Enable real Slack only when a bot token is present AND slack_sdk imports.
+
+        With no token (the unit-test default) this stays False and every handler
+        serves the deterministic fixture, keeping tests hermetic.
+        """
+        if not self.bot_token:
+            self._slack_available = False
+            return
+        try:
+            from slack_sdk import WebClient
+            self._client = WebClient(token=self.bot_token)
+            self._slack_available = True
+        except ImportError:
+            self._slack_available = False
 
     def handle_tool_call(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Dispatch tool call to appropriate handler."""
@@ -173,6 +194,24 @@ class MCPSlackServer:
         thread_ts: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Post a text or block-kit message to a Slack channel."""
+        if self._slack_available:
+            try:
+                resp = self._client.chat_postMessage(
+                    channel=channel, text=text, blocks=blocks, thread_ts=thread_ts
+                )
+                return {
+                    "status": "success",
+                    "channel": resp.get("channel", channel),
+                    "ts": resp.get("ts"),
+                    "thread_ts": thread_ts,
+                    "message": "Message posted successfully",
+                    "text": text,
+                    "blocks": blocks or [],
+                    "real_slack_api_used": True,
+                }
+            except Exception as exc:
+                logger.warning("Slack chat_postMessage failed: %s", exc)
+
         ts = f"{time.time():.6f}"
         return {
             "status": "success",
@@ -193,6 +232,25 @@ class MCPSlackServer:
         """Post an interactive approval card matching prompts.md §9 field-for-field."""
         data = incident_data or kwargs
         card = format_slack_approval_card(data)
+
+        if self._slack_available:
+            try:
+                resp = self._client.chat_postMessage(
+                    channel=channel, text=card["text"], blocks=card["blocks"]
+                )
+                return {
+                    "status": "success",
+                    "channel": resp.get("channel", channel),
+                    "ts": resp.get("ts"),
+                    "incident_id": card["incident_id"],
+                    "text": card["text"],
+                    "blocks": card["blocks"],
+                    "card_fields": card,
+                    "real_slack_api_used": True,
+                }
+            except Exception as exc:
+                logger.warning("Slack post_interactive_approval failed: %s", exc)
+
         ts = f"{time.time():.6f}"
 
         return {
@@ -207,6 +265,23 @@ class MCPSlackServer:
 
     def read_thread(self, channel: str = "incidents", thread_ts: str = "") -> Dict[str, Any]:
         """Read message thread history from Slack."""
+        if self._slack_available:
+            try:
+                resp = self._client.conversations_replies(channel=channel, ts=thread_ts)
+                messages = [
+                    {"user": m.get("user"), "text": m.get("text"), "ts": m.get("ts")}
+                    for m in resp.get("messages", [])
+                ]
+                return {
+                    "status": "success",
+                    "channel": channel,
+                    "thread_ts": thread_ts,
+                    "messages": messages,
+                    "real_slack_api_used": True,
+                }
+            except Exception as exc:
+                logger.warning("Slack conversations_replies failed: %s", exc)
+
         return {
             "status": "success",
             "channel": channel,
@@ -228,6 +303,23 @@ class MCPSlackServer:
         blocks: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Update an existing Slack message."""
+        if self._slack_available:
+            try:
+                resp = self._client.chat_update(
+                    channel=channel, ts=ts, text=text, blocks=blocks
+                )
+                return {
+                    "status": "success",
+                    "channel": resp.get("channel", channel),
+                    "ts": resp.get("ts", ts),
+                    "text": text,
+                    "blocks": blocks or [],
+                    "message": "Message updated successfully",
+                    "real_slack_api_used": True,
+                }
+            except Exception as exc:
+                logger.warning("Slack chat_update failed: %s", exc)
+
         return {
             "status": "success",
             "channel": channel,

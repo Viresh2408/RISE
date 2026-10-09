@@ -954,6 +954,15 @@ async def delete_incident(
         )
 
     before_state = _incident_to_dict(incident)
+    write_audit_event(
+        db=db,
+        actor=actor,
+        tenant_id=tenant_id,
+        action="incident.deleted",
+        before_state=before_state,
+        after_state=None,
+        incident_id=incident.id,
+    )
     db.delete(incident)
     db.commit()
 

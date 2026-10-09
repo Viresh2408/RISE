@@ -24,6 +24,27 @@ from apps.api.src.services.approval_lock import (
 )
 
 
+@pytest.fixture(autouse=True)
+def deterministic_analysis_boundaries(monkeypatch):
+    """Unit concurrency simulation, not a live inference/performance benchmark.
+
+    Keep the real graph, checkpointing and thread pool. External analysis boundaries
+    are deterministic so this suite cannot load models or contact providers 70 times.
+    Real latency certification belongs to the live integration/load harness.
+    """
+    from apps.agents.src.orchestrator import graph
+
+    monkeypatch.setattr(graph, "node_build_context", lambda state: {**state, "context": {"missing_sources": []}})
+    monkeypatch.setattr(graph, "node_investigate", lambda state: {**state, "hypotheses": []})
+    monkeypatch.setattr(graph, "node_root_cause", lambda state: {**state, "root_cause": {"confidence": 0.9}})
+    monkeypatch.setattr(graph, "node_impact_analysis", lambda state: {**state, "impact_assessment": {"blast_radius_services": []}})
+    monkeypatch.setattr(graph, "node_decide", lambda state: {
+        **state, "decision": {"requires_approval": True, "risk_tier": "medium"},
+        "action_plan": {"action_type": "restart_pod", "action_steps": [{"tool": "restart_pod", "params": {"pod_name": "p"}}],
+                        "rollback_plan": [{"tool": "restart_pod", "params": {"pod_name": "p"}}], "plan_rationale": "fixture"},
+    })
+
+
 def sample_empirical_llm_latency(token_count: int = 250) -> float:
     """Sample LLM latency from Phase 5 empirical llm_usage_log distribution.
     

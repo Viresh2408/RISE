@@ -65,7 +65,9 @@ def fetch_github_file_content(
         return None
 
     token = github_token or os.getenv("GITHUB_READ_TOKEN") or os.getenv("GITHUB_TOKEN")
-    base_url = (github_api_url or os.getenv("GITHUB_API_URL", "https://api.github.com")).rstrip("/")
+    base_url = str(
+        github_api_url or os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    ).rstrip("/")
 
     headers: Dict[str, str] = {"Accept": "application/vnd.github.v3+json"}
     if token:

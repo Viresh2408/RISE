@@ -66,6 +66,7 @@ from apps.api.src.services.ingestion.tenant_resolver import (
     resolve_tenant_from_integration,
 )
 from db.models import Incident, IncidentEvent, create_audit_event
+from db.runtime import allows_local_fallbacks
 
 logger = logging.getLogger(__name__)
 
@@ -498,6 +499,16 @@ async def slack_webhook(
             act_type = action_id.replace("_action", "")
             target_incident_id = val
 
+        if not allows_local_fallbacks() and (
+            act_type in {"approve", "reject", "modify"}
+            or action_id in {"approve_action", "reject_action", "modify_action"}
+        ):
+            raise HTTPException(409, detail={
+                "code": "CHATOPS_APPROVAL_UNAVAILABLE",
+                "message": "Slack actor/action/plan binding is not configured; use the persisted approval API",
+                "details": {},
+            })
+
         if not target_incident_id:
             target_incident_id = "inc-slack-001"
 
@@ -606,4 +617,3 @@ async def slack_webhook(
         db=db,
         redis_client=redis_client,
     )
-

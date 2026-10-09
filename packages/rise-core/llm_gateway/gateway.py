@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -138,7 +138,7 @@ class LLMGateway:
             uses it purely to collect tokens/cost/prompt-hash — so any exception
             it raises is swallowed.
             """
-            record_usage(db, **kw)
+            record_usage(db, **cast(Any, kw))
             if self._on_usage is not None:
                 try:
                     self._on_usage(dict(kw))

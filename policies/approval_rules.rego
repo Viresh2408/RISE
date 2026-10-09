@@ -4,30 +4,21 @@ package rise.policies.approval_rules
 # Default-deny posture: require approval unless explicitly auto-approved
 default requires_approval = true
 
-# Explicit auto-approval criteria for non-production environments (staging/dev)
+# Every environment requires an explicit administrator-created policy. Derive
+# risk from the authoritative risk package, not a caller's claimed risk tier.
 requires_approval = false {
-    input.environment != "production"
-    input.risk_tier == "low"
-    input.confidence >= input.min_confidence
-    input.blast_radius_count <= input.max_blast_radius
-}
-
-requires_approval = false {
-    input.environment != "production"
-    input.risk_tier == "medium"
-    input.confidence >= input.min_confidence
-    input.blast_radius_count <= input.max_blast_radius
-}
-
-# Production auto-approval criteria: ONLY allowed when an explicit matching policy permits it
-requires_approval = false {
-    input.environment == "production"
+    risk := data.rise.policies.risk_tiers.risk_level
+    {"low", "medium"}[risk]
     some i
     policy := input.policies[i]
+    object.get(policy, "active", true) == true
     policy.action_pattern == input.action_type
-    policy.environment == "production"
+    policy.environment == input.environment
+    policy.risk_tier == risk
     policy.requires_approval == false
     input.confidence >= input.min_confidence
+    input.confidence >= policy.min_confidence
+    input.blast_radius_count <= input.max_blast_radius
     input.blast_radius_count <= policy.max_blast_radius
 }
 
@@ -41,13 +32,14 @@ reasons[reason] {
 has_prod_auto_approval_policy {
     some i
     policy := input.policies[i]
+    object.get(policy, "active", true) == true
     policy.action_pattern == input.action_type
     policy.environment == "production"
     policy.requires_approval == false
 }
 
 reasons[reason] {
-    input.risk_tier == "critical"
+    data.rise.policies.risk_tiers.risk_level == "critical"
     reason := "Risk tier is critical - mandatory human approval required"
 }
 
@@ -63,7 +55,7 @@ reasons[reason] {
 
 reasons[reason] {
     input.environment == "production"
-    input.risk_tier == "high"
+    data.rise.policies.risk_tiers.risk_level == "high"
     reason := "High-risk action in production requires human approval"
 }
 
@@ -71,4 +63,3 @@ reasons[reason] {
     input.action_type == "code_fix_pr"
     reason := "Code fix PR requires mandatory human merge review"
 }
-

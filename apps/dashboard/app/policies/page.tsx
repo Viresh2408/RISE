@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Navbar } from '../../components/navbar';
 import { AdminGate } from '../../components/shared/AdminGate';
 import { CardSkeleton } from '../../components/shared/CardSkeleton';
@@ -24,49 +24,6 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-
-const DEMO_POLICIES: PolicyDTO[] = [
-  {
-    id: 'pol-001',
-    name: 'Critical Service Restart Guard',
-    description: 'Any restart_pod or kill_pod action targeting a CRITICAL service requires explicit human approval.',
-    action_types: ['restart_pod', 'kill_pod'],
-    risk_tier: 'critical',
-    requires_approval: true,
-    version: 3,
-    created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
-  },
-  {
-    id: 'pol-002',
-    name: 'Database Write Guard',
-    description: 'Any direct database write operation (DDL or destructive DML) must be pre-approved.',
-    action_types: ['run_sql', 'drop_table', 'truncate_table'],
-    risk_tier: 'high',
-    requires_approval: true,
-    version: 2,
-    created_at: new Date(Date.now() - 20 * 86400000).toISOString(),
-  },
-  {
-    id: 'pol-003',
-    name: 'Scale-Down Auto-Policy',
-    description: 'Scaling down replica count on non-critical services may proceed autonomously during off-peak hours.',
-    action_types: ['scale_deployment'],
-    risk_tier: 'medium',
-    requires_approval: false,
-    version: 1,
-    created_at: new Date(Date.now() - 15 * 86400000).toISOString(),
-  },
-  {
-    id: 'pol-004',
-    name: 'Log Rotation Automation',
-    description: 'Log cleanup and rotation actions are fully autonomous with no approval required.',
-    action_types: ['rotate_logs', 'archive_logs'],
-    risk_tier: 'low',
-    requires_approval: false,
-    version: 1,
-    created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
-  },
-];
 
 function getRiskTierStyle(tier: RiskTier) {
   switch (tier) {
@@ -96,28 +53,29 @@ function PoliciesContent() {
   const [riskTier, setRiskTier] = useState<RiskTier>('medium');
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Archived version toggle state per policy ID
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
 
-  const fetchPolicies = async () => {
+  const fetchPolicies = useCallback(async () => {
     if (!session?.token) return;
     setLoading(true);
     try {
       const data = await apiClient.listPolicies(session.token);
-      setPolicies(data || DEMO_POLICIES);
+      setPolicies(data || []);
       setError(null);
     } catch (err: any) {
       setError(err.message || 'Failed to load policies');
-      setPolicies(DEMO_POLICIES);
+      setPolicies([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [session]);
 
   useEffect(() => {
     fetchPolicies();
-  }, [session]);
+  }, [fetchPolicies]);
 
   // Lock requires_approval to true when risk_tier === 'critical'
   useEffect(() => {
@@ -131,6 +89,7 @@ function PoliciesContent() {
     if (!session?.token || !name.trim()) return;
 
     setCreating(true);
+    setCreateError(null);
     try {
       const actionArray = actions.split(',').map((a) => a.trim()).filter(Boolean);
       await apiClient.createPolicy(session.token, {
@@ -149,7 +108,7 @@ function PoliciesContent() {
       setActions('');
       fetchPolicies();
     } catch (err: any) {
-      alert(`Failed to save policy: ${err.message}`);
+      setCreateError(err.message || 'Failed to save policy');
     } finally {
       setCreating(false);
     }
@@ -179,7 +138,10 @@ function PoliciesContent() {
           </button>
 
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+              setCreateError(null);
+              setShowCreateModal(true);
+            }}
             className="inline-flex items-center gap-2 rounded-lg bg-[#8B5CF6] px-4 py-2 text-xs font-semibold text-[#FAF7F2] hover:bg-[#8B5CF6]/90 transition-colors shadow-md"
           >
             <Plus className="w-4 h-4" />
@@ -189,9 +151,9 @@ function PoliciesContent() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-3 rounded-xl border border-[#F5A623]/30 bg-[#F5A623]/10 p-4 text-[#F5A623] text-xs font-mono">
+        <div className="flex items-center gap-3 rounded-xl border border-[#EF4444]/30 bg-[#EF4444]/10 p-4 text-[#EF4444] text-xs font-mono">
           <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-          <span>API disconnected — displaying cached policy matrix. {error}</span>
+          <span>Failed to load policies — {error}</span>
         </div>
       )}
 
@@ -266,7 +228,10 @@ function PoliciesContent() {
                   </div>
                 )}
 
-                {/* Archived version history collapsible */}
+                {/* Version history. The policy API exposes only the current
+                    version; prior version contents are not returned, so we
+                    honestly state that rather than re-presenting the current
+                    description as an "archived" one. */}
                 {pol.version > 1 && (
                   <div className="pt-2 border-t border-[#E8E2D9]/10">
                     <button
@@ -276,16 +241,15 @@ function PoliciesContent() {
                       className="inline-flex items-center gap-2 text-xs font-mono text-[#6B6560] hover:text-[#FAF7F2] transition-colors"
                     >
                       {isHistoryOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      <span>View history ({pol.version - 1} archived versions)</span>
+                      <span>Version history</span>
                     </button>
 
                     {isHistoryOpen && (
-                      <div className="mt-3 p-3 rounded-lg border border-[#E8E2D9]/10 bg-[#0E0B14]/60 space-y-2 opacity-50 text-xs font-mono">
-                        <div className="flex justify-between text-[#6B6560]">
-                          <span>v{pol.version - 1} (Archived)</span>
-                          <span>{pol.created_at ? new Date(pol.created_at).toLocaleDateString() : 'Previous'}</span>
-                        </div>
-                        <p className="text-[#6B6560]">{polDesc}</p>
+                      <div className="mt-3 p-3 rounded-lg border border-[#E8E2D9]/10 bg-[#0E0B14]/60 text-xs font-mono text-[#6B6560]">
+                        This policy is at v{pol.version} ({pol.version - 1} prior{' '}
+                        {pol.version - 1 === 1 ? 'revision' : 'revisions'}). Prior
+                        version contents are not returned by the policy API and
+                        cannot be shown here.
                       </div>
                     )}
                   </div>
@@ -304,7 +268,7 @@ function PoliciesContent() {
               <h3 className={tx('sectionHeader', 'text-[#FAF7F2] normal-case text-lg font-semibold')}>
                 Define New Risk Policy Rule
               </h3>
-              <button onClick={() => setShowCreateModal(false)} className="text-[#6B6560] hover:text-[#FAF7F2]">
+              <button onClick={() => { setShowCreateModal(false); setCreateError(null); }} className="text-[#6B6560] hover:text-[#FAF7F2]">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -378,10 +342,20 @@ function PoliciesContent() {
                 />
               </div>
 
+              {createError && (
+                <div className="flex items-start gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3 text-xs font-mono text-[#EF4444]">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{createError}</span>
+                </div>
+              )}
+
               <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]/10">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    setCreateError(null);
+                  }}
                   className="rounded-lg border border-[#E8E2D9]/15 px-4 py-2 text-xs font-semibold text-[#E8E2D9] hover:bg-[#E8E2D9]/5"
                 >
                   Cancel

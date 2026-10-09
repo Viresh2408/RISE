@@ -38,13 +38,13 @@ import re
 import sys
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 # Add repository root to path
 sys.path.insert(0, os.path.abspath("packages/rise-core"))
 sys.path.insert(0, os.path.abspath("."))
 
-from apps.agents.src.orchestrator.graph import AgentState, create_orchestrator_graph, run_incident
+from apps.agents.src.orchestrator.graph import AgentState, create_orchestrator_graph
 from schemas.agent_state import (
     ActionPlan,
     ActionStep,
@@ -665,7 +665,7 @@ class EvaluationHarness:
             "# RISE Phase 5 Evaluation — Full Audit Trail",
             "",
             f"**Total Executed Runs**: {len(self.audit_log)} (20 Golden Path + 10 Adversarial)",
-            f"**Audit Trail Generated**: True",
+            "**Audit Trail Generated**: True",
             "",
             "## Summary Table",
             "",
@@ -785,28 +785,28 @@ class EvaluationHarness:
             json.dump(report, f, indent=2)
 
         md_lines = [
-            f"# RISE Orchestration Certification Report",
-            f"",
+            "# RISE Orchestration Certification Report",
+            "",
             f"**Run ID**: `{run_id}`  ",
             f"**Timestamp**: {report['timestamp']}  ",
-            f"",
-            f"> **NOTE**: This report certifies deterministic state-machine routing and guardrail",
-            f"> enforcement. It is **NOT** an RCA accuracy metric. See `docs/evaluation-methodology.md`.",
-            f"",
-            f"## Summary",
-            f"",
-            f"```",
+            "",
+            "> **NOTE**: This report certifies deterministic state-machine routing and guardrail",
+            "> enforcement. It is **NOT** an RCA accuracy metric. See `docs/evaluation-methodology.md`.",
+            "",
+            "## Summary",
+            "",
+            "```",
             f"Orchestration Certification: {passed}/{total} passed",
             f"  Golden path scenarios:  {golden_passed}/{len(golden_results)}",
             f"  Adversarial scenarios:  {adv_passed}/{len(adv_results)}",
             f"  False auto-approvals:   {false_auto_approvals} (target = 0)",
             f"  Overall:               {'PASS' if report['all_passed'] else 'FAIL'}",
-            f"```",
-            f"",
-            f"## Scenario Detail",
-            f"",
-            f"| ID | Type | Title | Decision Match | Completed/Resisted | Status |",
-            f"|---|---|---|---|---|---|",
+            "```",
+            "",
+            "## Scenario Detail",
+            "",
+            "| ID | Type | Title | Decision Match | Completed/Resisted | Status |",
+            "|---|---|---|---|---|---|",
         ]
         for entry in self.audit_log:
             if entry["type"] == "golden":

@@ -89,7 +89,7 @@ def test_risk_engine_evaluates_security_actions_risk_tiers():
         confidence=0.9,
     )
     assert res_soc.risk_tier == "low"
-    assert res_soc.requires_approval is False
+    assert res_soc.requires_approval is True  # No administrator-created policy.
 
 
 @pytest.mark.anyio
@@ -155,8 +155,8 @@ async def test_execution_agent_simulated_security_action_pipeline():
     assert exec_log["steps_total"] == 1
 
 
-def test_api_approve_simulated_security_action():
-    """Verify POST /actions/{action_id}/approve executes simulated security action and returns is_simulated=True."""
+def test_api_cannot_approve_an_unpersisted_security_action():
+    """An action name is not a persisted, tenant-scoped authorization target."""
     import os
     import time
     import jwt
@@ -181,12 +181,5 @@ def test_api_approve_simulated_security_action():
         headers={"Authorization": f"Bearer {token}", "Idempotency-Key": str(uuid.uuid4())},
         json={"note": "Approved simulated IP block for threat mitigation demo"},
     )
-    assert response.status_code == 200
-    data = response.json().get("data", {})
-    assert data.get("status") == "approved"
-    # Fail-closed contract: execution success is only reported after independent
-    # verification passes, so the terminal state is 'verified_success'.
-    assert data.get("execution_status") == "verified_success"
-    assert data.get("is_simulated") is True
-    assert data.get("action_type") == "block_ip_address"
-
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"

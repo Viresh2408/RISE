@@ -1,0 +1,25 @@
+# Staging overlay: namespace rise-staging, smaller footprint, no canary ingress
+# (canary is prod-only). Inherits the correct /healthz + /readyz probes from
+# base — this overlay only adjusts replicas, env, autoscaling, and the IRSA ARN.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rise-staging
+
+resources:
+  - ../../base
+
+# Staging image (registry/tag set by CI); overrides the base rise-api:latest.
+images:
+  - name: rise-api
+    newName: ghcr.io/rise/rise-api
+    newTag: staging
+
+patches:
+  - path: deployment.yaml
+  - path: hpa-patch.yaml
+  - path: serviceaccount-irsa.yaml
+
+commonLabels:
+  environment: staging
+  app.kubernetes.io/part-of: rise

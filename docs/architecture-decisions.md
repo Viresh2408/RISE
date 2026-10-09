@@ -222,6 +222,21 @@ and `::test_github_approval_rejects_stale_plan_hash`. The primary architecture d
 table (`RISE_ARCHITECTURE_AND_STATUS.md` §6) and the README deployment diagram are updated to
 scope which controls apply via the gateway vs. this direct path.
 
+### Status note (2026-09-29): patch content on the canonical path is templated, not a grounded LLM diff
+
+This ADR settles *which write path* opens real PRs (`github_service`, not the gateway) and that
+the direct path re-implements the gateway's guardrails. It is silent on **where the patch content
+comes from**, so for the record: `commit_remediation_to_github` takes **no diff parameter**. It
+fetches the real current file bytes, then derives the patch with `apply_patch_to_text` — a
+**templated** transform (keyword/filename-matched replacements plus a generic comment-prepend
+fallback). **No LLM is called and the patch validator does not run on this path.** The grounded,
+patch-validated LLM diff described elsewhere in the docs exists only in the **agent-graph
+remediation path**, which currently routes to the `mcp-github` **simulation** fixture rather than
+this real write path. Bridging the grounded, validated diff into `commit_remediation_to_github`
+(adding a patched-content parameter and retiring `apply_patch_to_text`, without weakening the
+ADR-004 guardrails or the grounding invariant) is tracked as **P0-1 (pending)** and is **not**
+implemented by this ADR.
+
 ---
 
 ## ADR-005: Persisted Human-Approval Anchor — Bind the Approver to a Specific Plan Hash
@@ -296,6 +311,47 @@ against the **persisted** value, not an in-flight one:
 - Regression coverage: `tests/test_approval_anchor_persistence.py` — a successful DB-backed
   remediation persists exactly one `Approval` anchor with the canonical `plan_hash`; a plan
   that drifts from a persisted anchor is rejected `ACTION_PLAN_CHANGED` before any GitHub write;
-  and `run_execution_agent` fails closed when `require_approved_hash` is set without an anchor.
+   and `run_execution_agent` fails closed when `require_approved_hash` is set without an anchor.
 
+### Phase 1 lifecycle hardening (2026-10-04)
 
+- Mutations require an existing tenant/incident-bound action; the raw execution
+  harness is local/test-only and is disabled in staging/production.
+- Authorization and its audit intent are committed **before** the external write.
+  Only a pending, unexpired, unchanged action snapshot can be claimed. A crash
+  leaves `executing` plus an incomplete durable request requiring reconciliation.
+- Approval, rejection and modification bind idempotency keys to actor, operation
+  and request. Committed responses replay without another side effect. Reused keys
+  with different requests and terminal-action mutations return 409.
+- Deployed API decisions require a UUID actor provisioned in `users` for the action's
+  tenant. Local non-UUID fixtures remain compatible with the nullable actor FK.
+- Manual modifications cannot be replaced by the generic templated executable
+  plan. Exact reviewed patch execution and dashboard hash echo remain later work.
+- Deployed Slack decisions fail closed until actor/action/plan binding is wired;
+  the local callback cache is not a production human-approval anchor.
+- Resource leases use unique nonces distinct from stable incident ownership.
+  Atomic compare-and-delete cannot release a successor lease with the same owner.
+
+---
+
+## ADR-006: Audit Tail Reads Use the Tenant Lock and READ COMMITTED
+
+- **Status**: Accepted for implementation; live restricted-role validation pending
+- **Date**: 2026-10-04
+- **Context**: Preserve append-only database privileges and concurrent chain integrity
+
+`rise_app` has SELECT/INSERT on `audit_events`, with UPDATE/DELETE explicitly
+revoked by the initial migration. PostgreSQL `SELECT ... FOR UPDATE` requires
+UPDATE privileges, so the previous tail-row lock conflicts with those intentional
+append-only permissions.
+
+The tenant row remains the serialization lock, held until the caller commits or
+rolls back. After acquiring it, the writer reads the immutable audit tail with a
+plain SELECT under READ COMMITTED, then appends its chained event in the same
+transaction. All audit writers use this path; no UPDATE/DELETE grants are added.
+The shared PostgreSQL engine explicitly selects READ COMMITTED so a writer sees
+the preceding committed tail after waiting for the tenant lock.
+
+`tests/integration/test_tenant_transactions.py` exercises concurrent writers using
+the restricted application role and verifies a single valid chain. This test is
+wired into the disposable-service CI job; an offline unit pass does not certify it.

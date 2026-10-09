@@ -1,0 +1,16 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.prometheusServiceMonitor }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rise-api
+  labels:
+    {{- include "rise-api.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "rise-api.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+{{- end }}

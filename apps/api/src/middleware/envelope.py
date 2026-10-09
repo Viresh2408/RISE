@@ -7,6 +7,7 @@ from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from mcp_client.lock import ResourceLockUnavailableError
 
 STATUS_CODE_TO_ERROR_CODE = {
     400: "VALIDATION_ERROR",
@@ -95,3 +96,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "error": error_obj,
         },
     )
+
+
+async def resource_lock_exception_handler(request: Request, exc: ResourceLockUnavailableError) -> JSONResponse:
+    return await http_exception_handler(request, StarletteHTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": "Distributed resource locking is unavailable", "details": {}},
+    ))

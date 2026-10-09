@@ -192,6 +192,7 @@ export const apiClient = {
     request<ActionRejectResponse>(`/incidents/${incidentId}/actions/${actionId}/reject`, {
       method: 'POST',
       token,
+      idempotencyKey: generateUUID(),
       body: JSON.stringify({ reason }),
     }),
 
@@ -204,6 +205,7 @@ export const apiClient = {
     request<ActionModifyResponse>(`/incidents/${incidentId}/actions/${actionId}/modify`, {
       method: 'POST',
       token,
+      idempotencyKey: generateUUID(),
       body: JSON.stringify({ modified_plan: modifiedPlan }),
     }),
 

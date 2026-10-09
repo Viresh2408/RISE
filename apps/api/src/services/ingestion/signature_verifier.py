@@ -103,7 +103,7 @@ class RealGitHubVerifier:
     """
 
     def __init__(self, secret: str | None = None) -> None:
-        self._secret = secret or os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+        self._secret: str = str(secret or os.environ.get("GITHUB_WEBHOOK_SECRET", ""))
 
     async def verify(self, request: Request, raw_body: bytes) -> None:
         if not self._secret:
@@ -134,7 +134,7 @@ class RealAlertmanagerVerifier:
     """
 
     def __init__(self, secret: str | None = None) -> None:
-        self._secret = secret or os.environ.get("ALERTMANAGER_WEBHOOK_SECRET", "")
+        self._secret: str = str(secret or os.environ.get("ALERTMANAGER_WEBHOOK_SECRET", ""))
 
     async def verify(self, request: Request, raw_body: bytes) -> None:
         if not self._secret:
@@ -165,7 +165,7 @@ class RealSlackVerifier:
     """
 
     def __init__(self, secret: str | None = None) -> None:
-        self._secret = secret or os.environ.get("SLACK_SIGNING_SECRET", "")
+        self._secret: str = str(secret or os.environ.get("SLACK_SIGNING_SECRET", ""))
 
     async def verify(self, request: Request, raw_body: bytes) -> None:
         if not self._secret:

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Fraunces, Inter } from 'next/font/google';
+import { Fraunces, Hanken_Grotesk, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '../lib/auth-context';
 import { AuthGuard } from '../components/auth-guard';
@@ -12,10 +12,17 @@ const fraunces = Fraunces({
   display: 'swap',
 });
 
-const inter = Inter({
+const hankenGrotesk = Hanken_Grotesk({
   subsets: ['latin'],
   variable: '--font-body',
-  weight: ['400', '500', '600'],
+  weight: ['400', '500', '600', '700'],
+  display: 'swap',
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono',
+  weight: ['400', '500', '700'],
   display: 'swap',
 });
 
@@ -26,8 +33,11 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`dark scroll-smooth ${fraunces.variable} ${inter.variable}`}>
-      <body className="min-h-screen antialiased bg-[#0E0B14] text-[#FAF7F2] font-body">
+    <html
+      lang="en"
+      className={`dark scroll-smooth ${fraunces.variable} ${hankenGrotesk.variable} ${jetbrainsMono.variable}`}
+    >
+      <body className="min-h-screen antialiased bg-near-black text-cream font-body">
         <AuthProvider>
           <AuthGuard>{children}</AuthGuard>
         </AuthProvider>

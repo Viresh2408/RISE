@@ -1,0 +1,59 @@
+{
+  "project": {
+    "id": "13472080743180234873",
+    "name": "projects/13472080743180234873",
+    "title": "RISE Marketing Landing Page",
+    "projectType": "TEXT_TO_UI_PRO",
+    "designSystem": "assets/ba9cc48972bf4a02800ab3e11b1f62a9",
+    "designSystemName": "RISE Antigravity",
+    "themeNote": "Fraunces display / Hanken Grotesk body+UI / JetBrains Mono data; ivory Day Mode + Midnight Mode. Applied at PROJECT level via DESIGN.md — NEVER put fonts/colors/hex/roundness in generation prompts.",
+    "lastCatalogued": "2026-09-28"
+  },
+  "writePathStatus": {
+    "readPath": "healthy (list_screens / get_project succeed on every poll)",
+    "writePath": "DOWN. generate_screen_from_text timed out on the /reports attempt (2026-09-28) and never registered — confirmed absent after an immediate poll AND a ~90s wait window. Recurs the documented prior-session outage. PAUSED: do not hammer the endpoint; re-fire staged prompts (.stitch/pending-prompts.md) when it recovers.",
+    "note": "Earlier 'recovery' was inferred from reads succeeding + screens existing, not from a successful new WRITE. The write path remains the bottleneck; a lean-prompt failure in the prior session rules out render-time/complexity."
+  },
+  "coverageGaps": {
+    "note": "Dashboard routes that still have NO Stitch screen as of 2026-09-28. These are the remaining Stitch work.",
+    "routes": ["/reports", "/policies", "/knowledge", "/integrations"]
+  },
+  "localAssets": {
+    "dir": ".stitch/designs",
+    "files": [
+      "_baseline_active-incidents-dashboard.png",
+      "_baseline_incident-detail.png",
+      "cc_command-center.png",
+      "cc_triage-dashboard.png",
+      "state_empty.png",
+      "active-incidents_accessible.png"
+    ]
+  },
+  "screens": [
+    { "id": "e97ffba5afec451aaf9c312bc0b6c3ec", "title": "RISE Marketing Landing Page - Optimized & Accessible", "category": "marketing", "device": "DESKTOP", "role": "canonical-final", "hasScreenshot": true },
+    { "id": "b3fd425f419042a3aca9c73f31403281", "title": "RISE Marketing Landing Page", "category": "marketing", "device": "DESKTOP", "role": "iteration", "hasScreenshot": true },
+    { "id": "bf2cdb68675a432ca8086e3e5af8d69d", "title": "RISE Marketing Landing Page - Reworked 3D Pipeline", "category": "marketing", "device": "DESKTOP", "role": "iteration", "hasScreenshot": true },
+    { "id": "aeaf440037674a5884371f3811718a9a", "title": "RISE Marketing Landing Page - Updated 3D Pipeline", "category": "marketing", "device": "DESKTOP", "role": "iteration", "hasScreenshot": true },
+    { "id": "d639b75ff2314e0e842e5bba073d4573", "title": "RISE Marketing Landing Page - Architecture Highlight Added", "category": "marketing", "device": "DESKTOP", "role": "iteration", "hasScreenshot": true },
+    { "id": "832bdfe093a74c9484a88d64c20970ed", "title": "RISE Marketing Landing Page - Final Complete Sequence", "category": "marketing", "device": "DESKTOP", "role": "iteration", "hasScreenshot": false },
+    { "id": "912053fd8bbc4719b94512d31a206e8b", "title": "RISE Marketing Landing Page - Metrics Section Added", "category": "marketing", "device": "DESKTOP", "role": "iteration", "hasScreenshot": false },
+    { "id": "73e4726248b44055b0214740ad24ad82", "title": "RISE Marketing Landing Page - Tech Stack Added", "category": "marketing", "device": "DESKTOP", "role": "iteration", "hasScreenshot": false },
+    { "id": "124efdf9f6a84f1db34e677f105559ef", "title": "RISE Active Incidents Dashboard - Accessible Views", "category": "active-incidents", "device": "DESKTOP", "role": "canonical-final", "hasScreenshot": true, "localScreenshot": "active-incidents_accessible.png" },
+    { "id": "d673794ee43b4e05bb407ab73ef4ff1d", "title": "RISE Active Incidents Dashboard", "category": "active-incidents", "device": "DESKTOP", "role": "baseline-counterexample", "note": "Original Aug-2026 design; embodies fabricated-data anti-patterns — reference only, not a target.", "hasScreenshot": true, "localScreenshot": "_baseline_active-incidents-dashboard.png" },
+    { "id": "83dcdf7c0cb442b3b8f7920938823280", "title": "RISE Incident Command Center — Triage Dashboard", "category": "command-center", "device": "DESKTOP", "role": "canonical-final", "hasScreenshot": true, "localScreenshot": "cc_triage-dashboard.png" },
+    { "id": "92e6f3cdee694d3cafc0fc4a7d68514d", "title": "RISE Incident Command Center", "category": "command-center", "device": "DESKTOP", "role": "iteration", "hasScreenshot": true, "localScreenshot": "cc_command-center.png" },
+    { "id": "46a4f79d6b374508be95fab5ba90cafb", "title": "RISE Incident Command Center", "category": "command-center", "device": "DESKTOP", "role": "iteration", "hasScreenshot": true },
+    { "id": "fb30398638b9443982675fe760efbe05", "title": "RISE Incident Command Center", "category": "command-center", "device": "DESKTOP", "role": "iteration", "hasScreenshot": true },
+    { "id": "42d61cc7b94a4352a269268602f6751c", "title": "RISE Incident Command Center", "category": "command-center", "device": "DESKTOP", "role": "iteration", "hasScreenshot": true },
+    { "id": "6b74cc99e8774648b5ccf34184ff02ae", "title": "RISE Dashboard - Empty State", "category": "state", "device": "DESKTOP", "role": "canonical-final", "hasScreenshot": true, "localScreenshot": "state_empty.png" },
+    { "id": "4970d4b01a2b41d8a58f1c988501aba4", "title": "RISE Dashboard - Loading State", "category": "state", "device": "DESKTOP", "role": "canonical-final", "hasScreenshot": true },
+    { "id": "edb2d72f2ecf49aa921c974d867930c1", "title": "RISE Incident Detail - Not Found Error", "category": "incident-detail", "device": "DESKTOP", "role": "error-state", "hasScreenshot": true },
+    { "id": "78a11edffd184668b771a423186f1f35", "title": "RISE Incident Detail - [SEV1] API Error Spike", "category": "incident-detail", "device": "DESKTOP", "role": "baseline-counterexample", "note": "Baseline SEV1 detail; embodies fabricated confidence/evidence anti-patterns — reference only.", "hasScreenshot": true, "localScreenshot": "_baseline_incident-detail.png" },
+    { "id": "e56e0f9c6bf54290a50f4fd38c9b06aa", "title": "Incident Resolution Flow", "category": "flow", "device": "DESKTOP", "role": "reference", "hasScreenshot": false },
+    { "id": "55336afc33a1406f99df10e303ef110c", "title": "Connection Lost — error illustration", "category": "illustration", "device": "VECTOR", "role": "asset", "hasScreenshot": true },
+    { "id": "4ab151ec3a2a4b428db7e80b8d5c5744", "title": "No Incidents — empty illustration", "category": "illustration", "device": "VECTOR", "role": "asset", "hasScreenshot": true },
+    { "id": "182619c05fe5498f9479a8aabc74754f", "title": "Incident Not Found — error illustration", "category": "illustration", "device": "VECTOR", "role": "asset", "hasScreenshot": true },
+    { "id": "b6f3162a2d594606bc1f1b8e3dc47e6a", "title": "RISE Product Requirements Document (PRD)", "category": "doc", "device": "DESKTOP", "role": "reference", "hasScreenshot": false },
+    { "id": "e1531b24ef604f8d923c4dda2a1471dc", "title": "Three.js scene fragment", "category": "3d-asset", "device": "FRAGMENT", "role": "asset", "hasScreenshot": false }
+  ]
+}

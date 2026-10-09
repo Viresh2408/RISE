@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(poetry --version)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "21st"
+  ],
+  "outputStyle": "default",
+  "enableAllProjectMcpServers": true
+}

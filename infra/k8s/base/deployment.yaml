@@ -1,0 +1,66 @@
+# rise-api Deployment (stable track).  Probe paths match the FastAPI health
+# router (apps/api/src/routers/health.py): /healthz is liveness, /readyz is
+# readiness (checks Postgres/Redis/Qdrant, 503 when degraded). Container port
+# 8000 matches the API Dockerfile's uvicorn --port 8000. runAsUser 10001
+# matches the non-root user created in apps/api/Dockerfile.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rise-api
+  labels:
+    app: rise-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rise-api
+  template:
+    metadata:
+      labels:
+        app: rise-api
+        track: stable
+    spec:
+      serviceAccountName: rise-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rise-api
+          image: rise-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: rise-api-config
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1024Mi"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3

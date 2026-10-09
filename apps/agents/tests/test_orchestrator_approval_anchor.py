@@ -15,12 +15,15 @@ orchestrator. These tests prove:
 
 import asyncio
 import uuid
+import pytest
 
 from apps.agents.src.orchestrator.graph import (
     create_orchestrator_graph,
     node_await_human,
 )
 from apps.agents.src.nodes.execution import run_execution_agent
+
+pytestmark = pytest.mark.usefixtures("offline_agent_io")
 
 
 def _approval_plan():

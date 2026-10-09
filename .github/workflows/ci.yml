@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install Poetry
         run: pipx install poetry
@@ -27,7 +27,66 @@ jobs:
         run: poetry install --no-interaction
 
       - name: Run pytest (unit tests; integration deselected via addopts)
-        run: poetry run pytest -q
+        run: poetry run python scripts/run_unit_tests.py -q
+
+  policy-tests:
+    name: OPA policy contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned OPA
+        run: |
+          curl --fail --location --retry 2 --output /tmp/opa https://github.com/open-policy-agent/opa/releases/download/v0.63.0/opa_linux_amd64_static
+          echo 'af1a9d13611974ff18c529dea3592512dd46f80a4fba95969cebccd2b0ddca64  /tmp/opa' | sha256sum --check
+          chmod +x /tmp/opa
+      - name: Run Rego tests
+        run: /tmp/opa test policies/ -v
+
+  schema-and-isolation-tests:
+    name: PostgreSQL migrations/RLS and Redis locks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rise_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d rise_dev"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ENVIRONMENT: ci
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/rise_dev
+      RISE_INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/rise_dev
+      RISE_INTEGRATION_APP_PASSWORD: rise_app_pass
+      RISE_INTEGRATION_REDIS_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Poetry and dependencies
+        run: |
+          pipx install poetry
+          poetry install --no-interaction
+      - name: Validate migrations including rollback of the new revisions
+        run: |
+          poetry run alembic upgrade head
+          poetry run alembic downgrade 0005_impact_risk_score
+          poetry run alembic upgrade head
+      - name: Validate restricted-role RLS, audit concurrency and Redis ownership
+        run: >-
+          poetry run pytest -q -m integration
+          tests/integration/test_tenant_transactions.py
+          tests/integration/test_redis_execution_locks.py
 
   frontend-build:
     name: Dashboard lint + build (pnpm)
@@ -43,14 +102,17 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'pnpm'
+          node-version: "22"
+          cache: "pnpm"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Lint
         run: pnpm lint
+
+      - name: Dashboard tests
+        run: pnpm --filter rise-dashboard test
 
       - name: Build dashboard
         run: pnpm build

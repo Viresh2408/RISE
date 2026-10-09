@@ -12,6 +12,9 @@ from apps.agents.src.orchestrator.graph import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("offline_agent_io")
+
+
 def test_noop_end_to_end_completes():
     """Test graph completes auto-approved path from START to END."""
     app = create_orchestrator_graph()

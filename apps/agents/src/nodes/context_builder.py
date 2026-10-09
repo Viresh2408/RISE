@@ -130,8 +130,8 @@ def fetch_loki_logs(
         - 200 OK with logs: returns (logs_json, False)
     """
     effective_timeout = timeout_s if timeout_s is not None else _get_default_timeout()
-    url = loki_url or os.getenv("LOKI_URL", "http://localhost:3100")
-    endpoint = f"{url.rstrip('/')}/loki/api/v1/query_range"
+    url = loki_url or os.environ.get("LOKI_URL", "http://localhost:3100")
+    endpoint = f"{str(url).rstrip('/')}/loki/api/v1/query_range"
     query = f'{{resource="{resource_id}"}}'
     params = {"query": query, "limit": 50}
 
@@ -161,8 +161,8 @@ def fetch_prometheus_metrics(
         (retrieved_text, is_missing_source)
     """
     effective_timeout = timeout_s if timeout_s is not None else _get_default_timeout()
-    url = prometheus_url or os.getenv("PROMETHEUS_URL", "http://localhost:9090")
-    endpoint = f"{url.rstrip('/')}/api/v1/query"
+    url = prometheus_url or os.environ.get("PROMETHEUS_URL", "http://localhost:9090")
+    endpoint = f"{str(url).rstrip('/')}/api/v1/query"
     query = f'up{{instance="{resource_id}"}} or rate(http_requests_total{{job="{resource_id}"}}[5m])'
     params = {"query": query}
 
@@ -195,7 +195,7 @@ def fetch_github_deploys(
         (retrieved_text, is_missing_source)
     """
     effective_timeout = timeout_s if timeout_s is not None else _get_default_timeout()
-    base_url = github_url or os.getenv("GITHUB_API_URL", "https://api.github.com")
+    base_url = github_url or os.environ.get("GITHUB_API_URL", "https://api.github.com")
     token = github_token or os.getenv("GITHUB_READ_TOKEN") or os.getenv("GITHUB_TOKEN")
 
     headers = {"Accept": "application/vnd.github.v3+json"}
@@ -203,7 +203,7 @@ def fetch_github_deploys(
         headers["Authorization"] = f"Bearer {token}"
 
     repo = os.getenv("GITHUB_REPO", f"org/{resource_id}")
-    endpoint = f"{base_url.rstrip('/')}/repos/{repo}/commits"
+    endpoint = f"{str(base_url).rstrip('/')}/repos/{repo}/commits"
 
     try:
         with httpx.Client(timeout=effective_timeout) as client:

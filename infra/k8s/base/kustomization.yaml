@@ -1,0 +1,13 @@
+# RISE API Kustomize base.  Shared, environment-agnostic manifests for the
+# FastAPI service.  Overlays (overlays/staging, overlays/prod) set the
+# namespace, image tag, replica/HPA bounds, the IRSA role ARN, and prod-only
+# canary ingress.  Build locally with: `kubectl kustomize infra/k8s/base`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - serviceaccount.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml

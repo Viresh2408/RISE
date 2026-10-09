@@ -3,7 +3,7 @@
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -37,9 +37,10 @@ def _to_dto(policy: RiskPolicy, *, max_blast_radius: Optional[int] = None) -> di
         max_blast_radius=(
             max_blast_radius
             if max_blast_radius is not None
-            else _max_blast_radius_for_tier(policy.risk_tier)
+            else policy.max_blast_radius
         ),
         version=policy.version,
+        min_confidence=policy.min_confidence,
     ).model_dump()
 
 
@@ -87,6 +88,8 @@ async def create_policy(
         environment=req.environment,
         risk_tier=req.risk_tier,
         requires_approval=requires_appr,
+        max_blast_radius=req.max_blast_radius,
+        min_confidence=req.min_confidence,
         version=1,
         active=True,
     )
@@ -150,6 +153,10 @@ async def update_policy(
             policy.risk_tier = req.risk_tier
         if req.requires_approval is not None:
             policy.requires_approval = req.requires_approval
+        if req.max_blast_radius is not None:
+            policy.max_blast_radius = req.max_blast_radius
+        if req.min_confidence is not None:
+            policy.min_confidence = req.min_confidence
         if policy.risk_tier == "critical":
             policy.requires_approval = True
         policy.version += 1
@@ -172,27 +179,7 @@ async def update_policy(
         db.refresh(policy)
         return build_response(data=_to_dto(policy, max_blast_radius=req.max_blast_radius))
 
-    # No such policy row (e.g. a non-UUID placeholder id): echo the requested
-    # change so the caller gets a consistent DTO rather than a 404 on an id that
-    # was never materialised.
-    risk_tier = req.risk_tier or "medium"
-    requires_appr = req.requires_approval if req.requires_approval is not None else True
-    if risk_tier == "critical":
-        requires_appr = True
-    echoed = RiskPolicyDTO(
-        id=policy_id,
-        action_pattern=req.action_pattern or "",
-        environment=req.environment or "",
-        risk_tier=risk_tier,
-        requires_approval=requires_appr,
-        max_blast_radius=(
-            req.max_blast_radius
-            if req.max_blast_radius is not None
-            else _max_blast_radius_for_tier(risk_tier)
-        ),
-        version=1,
-    ).model_dump()
-    return build_response(data=echoed)
+    raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Policy not found", "details": {}})
 
 
 @router.delete("/{policy_id}", status_code=status.HTTP_200_OK)

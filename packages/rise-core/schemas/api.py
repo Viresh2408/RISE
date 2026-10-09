@@ -260,6 +260,7 @@ class RiskPolicyDTO(BaseModel):
     requires_approval: bool
     max_blast_radius: int
     version: int = 1
+    min_confidence: float = 0.90
 
 
 class PolicyCreateRequest(BaseModel):
@@ -267,7 +268,8 @@ class PolicyCreateRequest(BaseModel):
     environment: str
     risk_tier: str
     requires_approval: bool
-    max_blast_radius: int
+    max_blast_radius: int = Field(ge=0)
+    min_confidence: float = Field(default=0.90, ge=0.70, le=1.0)
 
 
 class PolicyUpdateRequest(BaseModel):
@@ -275,7 +277,8 @@ class PolicyUpdateRequest(BaseModel):
     environment: Optional[str] = None
     risk_tier: Optional[str] = None
     requires_approval: Optional[bool] = None
-    max_blast_radius: Optional[int] = None
+    max_blast_radius: Optional[int] = Field(default=None, ge=0)
+    min_confidence: Optional[float] = Field(default=None, ge=0.70, le=1.0)
 
 
 class IntegrationDTO(BaseModel):

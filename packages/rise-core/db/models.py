@@ -309,6 +309,8 @@ class RiskPolicy(Base):
     environment: Mapped[str] = mapped_column(String(100), nullable=False)
     risk_tier: Mapped[str] = mapped_column(String(50), nullable=False)
     requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    max_blast_radius: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+    min_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.90, server_default=text("0.90"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -378,6 +380,13 @@ class Approval(Base):
     )
     expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    response: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("uq_approval_request_key", "tenant_id", "idempotency_key", unique=True),
     )
 
 
@@ -531,15 +540,15 @@ def create_audit_event(
         stmt_tenant = stmt_tenant.with_for_update()
     session.execute(stmt_tenant)
 
-    # 2. Get the latest audit event for this tenant
+    # 2. Read the immutable tail after acquiring the tenant lock. At READ COMMITTED
+    # this sees the preceding writer's committed event. Locking audit_events itself
+    # would require UPDATE privileges, which rise_app intentionally does not have.
     stmt_latest = (
         select(AuditEvent)
         .where(AuditEvent.tenant_id == tenant_id)
         .order_by(AuditEvent.seq.desc())
         .limit(1)
     )
-    if not is_sqlite:
-        stmt_latest = stmt_latest.with_for_update()
     latest_event = session.execute(stmt_latest).scalar_one_or_none()
 
     if latest_event:

@@ -1,10 +1,13 @@
 """Actions and Decisions Router."""
 
 import logging
+import hashlib
+import json
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
-logger = logging.getLogger(__name__)
 from schemas import (
     ActionApproveRequest,
     ActionExecuteRequest,
@@ -14,13 +17,14 @@ from schemas import (
     ActionRejectRequest,
     ActionRejectResponse,
 )
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from db.models import Incident, RemediationAction, Service
+from db.models import Approval, Incident, RemediationAction, Service, User
 from apps.agents.src.nodes.execution import run_execution_agent
 from mcp_client.hash import compute_action_plan_hash
 from mcp_client.lock import ResourceLockManager, ResourceLockedException
+from db.runtime import allows_local_fallbacks
 from apps.api.src.deps import UserContext, require_role, require_idempotency_key, get_db
 from apps.api.src.deps.redis import get_redis_client
 from apps.api.src.middleware.audit import write_audit_event
@@ -32,12 +36,14 @@ from apps.api.src.services.incident_views import (
     build_root_cause_view,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/incidents/{incident_id}", tags=["Decisions & Actions"])
 
 
-def _load_incident(db: Session, incident_id: str) -> Incident:
+def _load_incident(db: Session, incident_id: str, tenant_id: uuid.UUID) -> Incident:
     inc = db.execute(
-        select(Incident).where(Incident.id == _parse_uuid(incident_id))
+        select(Incident).where(Incident.id == _parse_uuid(incident_id), Incident.tenant_id == tenant_id)
     ).scalar_one_or_none()
     if inc is None:
         raise HTTPException(
@@ -50,18 +56,17 @@ def _load_incident(db: Session, incident_id: str) -> Incident:
 def _service_name(db: Session, incident: Incident) -> str:
     if incident.affected_service_id:
         svc = db.execute(
-            select(Service).where(Service.id == incident.affected_service_id)
+            select(Service).where(Service.id == incident.affected_service_id, Service.tenant_id == incident.tenant_id)
         ).scalar_one_or_none()
         return svc.name if svc else ""
     return ""
 
 
-def _load_action(db: Session, action_id: str):
+def _load_action(db: Session, action_id: str, *, tenant_id: uuid.UUID, incident_id: str) -> Optional[RemediationAction]:
     """Return the RemediationAction row for ``action_id``, or None.
 
-    Returns None for a non-UUID slug (e.g. the ``act-001`` demo id) or when no
-    row exists — callers treat that as "nothing to persist" rather than 404 so
-    idempotent decisions on not-yet-materialised actions still succeed.
+    Returns None for a non-UUID identifier or a missing/foreign/misbound row.
+    Mutation handlers reject these rather than inventing an approval target.
     """
     try:
         import uuid as _uuid
@@ -69,11 +74,15 @@ def _load_action(db: Session, action_id: str):
     except ValueError:
         return None
     return db.execute(
-        select(RemediationAction).where(RemediationAction.id == act_uuid)
+        select(RemediationAction).where(
+            RemediationAction.id == act_uuid,
+            RemediationAction.tenant_id == tenant_id,
+            RemediationAction.incident_id == _parse_uuid(incident_id),
+        )
     ).scalar_one_or_none()
 
 
-def _parse_optional_uuid(value: Any):
+def _parse_optional_uuid(value: Any) -> Optional[uuid.UUID]:
     """Best-effort UUID parse; returns None for slugs / non-UUID actor ids.
 
     ``Approval.user_id`` is a nullable FK, so a non-UUID identity (e.g. a mock
@@ -97,7 +106,7 @@ def _action_plan_changed_error(approved_hash: str, current_hash: str) -> HTTPExc
     )
 
 
-def _persisted_approval_anchor(db: Session, action):
+def _persisted_approval_anchor(db: Session, action: Optional[RemediationAction]) -> Optional[Approval]:
     """Most recent persisted ``Approval`` row for a real DB action, or None.
 
     This row is the DURABLE anchor binding a specific human (``user_id``) to the
@@ -110,32 +119,136 @@ def _persisted_approval_anchor(db: Session, action):
     from db.models import Approval
     return db.execute(
         select(Approval)
-        .where(Approval.action_id == action.id)
+        .where(Approval.action_id == action.id, Approval.tenant_id == action.tenant_id, Approval.decision == "approved")
         .order_by(Approval.decided_at.desc())
     ).scalars().first()
 
 
-def _persist_approval_anchor(db: Session, *, action, tenant_id, user_id, decision, note, plan_hash):
+def _persist_approval_anchor(
+    db: Session, *, action: RemediationAction, tenant_id: uuid.UUID,
+    user_id: str, decision: str, note: Optional[str], plan_hash: str,
+    idempotency_key: Optional[str] = None, request_hash: Optional[str] = None,
+) -> Approval:
     """Persist the human-approval anchor (user + decision + plan_hash + time).
 
     Bound inside the caller's fail-loud commit: an approval whose anchor cannot be
-    recorded must NOT proceed on an unrecorded human decision. No-op for demo /
-    non-DB actions (no ``remediation_actions`` row to satisfy the FK). See ADR-005.
+    recorded must NOT proceed on an unrecorded human decision. The action is a
+    persisted, owned DB row; no synthetic/demo anchor can authorize execution.
+    See ADR-005.
     """
-    if action is None:
-        return None
     from db.models import Approval
+    actor_id = _parse_optional_uuid(user_id)
+    if not allows_local_fallbacks() and (actor_id is None or db.execute(select(User.id).where(
+        User.id == actor_id, User.tenant_id == tenant_id,
+    )).scalar_one_or_none() is None):
+        raise HTTPException(403, detail={"code": "APPROVER_NOT_PROVISIONED", "message": "Approver identity is not provisioned for this tenant", "details": {}})
     approval = Approval(
         tenant_id=tenant_id,
         action_id=action.id,
-        user_id=_parse_optional_uuid(user_id),
+        user_id=actor_id,
         decision=decision,
         note=note,
         plan_hash=plan_hash,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
     )
     db.add(approval)
     db.flush()
     return approval
+
+
+def _decision_request_hash(user: UserContext, incident_id: str, action_id: str, operation: str, request: Any) -> str:
+    return hashlib.sha256(json.dumps({
+        "incident_id": incident_id, "action_id": action_id, "actor": user.user_id,
+        "operation": operation, "request": request.model_dump(exclude_none=True) if request else {},
+    }, sort_keys=True).encode()).hexdigest()
+
+
+def _previous_decision_response(db: Session, tenant_id: uuid.UUID, key: str, request_hash: str) -> Optional[dict[str, Any]]:
+    previous = db.execute(select(Approval).where(
+        Approval.tenant_id == tenant_id, Approval.idempotency_key == key,
+    )).scalars().first()
+    if previous is None:
+        return None
+    if previous.request_hash != request_hash:
+        raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED", "message": "Request key belongs to a different decision request", "details": {}})
+    if previous.response is not None:
+        return previous.response
+    raise HTTPException(409, detail={"code": "EXECUTION_IN_PROGRESS", "message": "Execution outcome requires reconciliation; this request will not run twice", "details": {}})
+
+
+def _assert_unexpired(action: RemediationAction) -> None:
+    requested_at = action.created_at
+    if requested_at.tzinfo is None:
+        requested_at = requested_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > requested_at + timedelta(minutes=15):
+        raise HTTPException(409, detail={"code": "APPROVAL_EXPIRED", "message": "Approval SLA passed; generate a fresh action", "details": {}})
+
+
+def _update_pending_action(db: Session, action: RemediationAction, values: dict[str, Any]) -> None:
+    # Compare the plan as well as status: a modification must invalidate a stale
+    # approval snapshot even when both requests originally read pending_approval.
+    claimed = db.execute(update(RemediationAction).where(
+        RemediationAction.id == action.id,
+        RemediationAction.tenant_id == action.tenant_id,
+        RemediationAction.incident_id == action.incident_id,
+        RemediationAction.status == "pending_approval",
+        RemediationAction.action_plan == action.action_plan,
+        RemediationAction.created_at >= datetime.now(timezone.utc) - timedelta(minutes=15),
+    ).values(**values).execution_options(synchronize_session=False))
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "ALREADY_DECIDED", "message": "Action is no longer awaiting this decision; reload its current plan", "details": {}})
+
+
+def _authorize_before_execution(
+    db: Session, *, action: RemediationAction, user: UserContext,
+    plan_hash: str, note: Optional[str], key: str, request_hash: str,
+) -> Approval:
+    """Commit the human authorization and audit intent BEFORE an external write.
+
+    A conditional status update is the durable concurrency boundary, including
+    across processes. A crash leaves an executing action that requires reconciliation,
+    rather than allowing a retry to execute an unknown outcome twice.
+    """
+    _update_pending_action(db, action, {"status": "executing"})
+    try:
+        anchor = _persist_approval_anchor(
+            db, action=action, tenant_id=_parse_uuid(user.tenant_id),
+            user_id=user.user_id, decision="approved", note=note, plan_hash=plan_hash,
+            idempotency_key=key, request_hash=request_hash,
+        )
+        write_audit_event(
+            db, actor=f"user:{user.user_id}", tenant_id=action.tenant_id,
+            action="action.execution_authorized", incident_id=action.incident_id,
+            before_state={"status": "pending_approval"},
+            after_state={"action_id": str(action.id), "plan_hash": plan_hash, "status": "executing"},
+        )
+        db.commit()
+        return anchor
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(500, detail={"code": "APPROVAL_PERSIST_FAILED", "message": "Authorization could not be recorded; execution was blocked", "details": {}}) from exc
+
+
+def _record_approval_response(db: Session, action: RemediationAction, anchor: Approval, response: dict[str, Any]) -> None:
+    try:
+        anchor.response = response
+        action.status = "executed" if response.get("execution_status") == "verified_success" else "failed"
+        write_audit_event(
+            db, actor=f"approval:{anchor.id}", tenant_id=action.tenant_id,
+            action="action.execution_completed", incident_id=action.incident_id,
+            before_state={"status": "executing"},
+            after_state={"action_id": str(action.id), "status": action.status, "response": response},
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(500, detail={"code": "AUDIT_WRITE_FAILED", "message": "Execution outcome could not be recorded; reconciliation is required", "details": {}}) from exc
 
 
 @router.get("/decision")
@@ -145,7 +258,7 @@ async def get_decision(
     db: Session = Depends(get_db),
 ):
     tenant_id = _parse_uuid(user.tenant_id)
-    incident = _load_incident(db, incident_id)
+    incident = _load_incident(db, incident_id, tenant_id)
     service_name = _service_name(db, incident)
     rc = build_root_cause_view(db, tenant_id, incident, service_name)
     action_rows, _ = build_actions_view(db, tenant_id, incident, service_name)
@@ -163,55 +276,27 @@ async def approve_action(
     db: Any = Depends(get_db),
     redis_client: Any = Depends(get_redis_client),
 ):
-    from apps.api.src.services.approval_lock import (
-        acquire_single_use_approval_lock,
-        is_approval_decided,
-        mark_approval_decided,
-        release_single_use_approval_lock,
-    )
-
-    if is_approval_decided(action_id):
-        # Allow idempotent re-approval if requested
-        pass
-
-    acquire_single_use_approval_lock(action_id)
+    approval_key = f"approval:{user.tenant_id}:{action_id}"
+    try:
+        approval_token = ResourceLockManager.acquire_lock(approval_key, redis_client=redis_client)
+    except ResourceLockedException as exc:
+        raise HTTPException(409, detail={"code": "CONCURRENT_APPROVAL", "message": "Approval is already being processed", "details": {}}) from exc
 
     try:
-        if action_id == "plan-changed":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "ACTION_PLAN_CHANGED",
-                    "message": "Action plan was modified after approval request was issued",
-                    "details": {},
-                },
-            )
-        if action_id == "expired":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "APPROVAL_EXPIRED",
-                    "message": "Approval SLA passed",
-                    "details": {},
-                },
-            )
-        if action_id == "locked":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "RESOURCE_LOCKED",
-                    "message": "Concurrent remediation lock held",
-                    "details": {},
-                },
-            )
-
-        mark_approval_decided(action_id, "approved")
-
-        # Real DB-backed action row (None for demo slugs like ``act-fix-01``); used
-        # to persist and compare the durable human-approval anchor. See ADR-005.
-        action_row = _load_action(db, action_id)
+        # Only persisted actions belonging to this tenant and incident may execute.
         approver_tenant = _parse_uuid(user.tenant_id)
+        action_row = _load_action(db, action_id, tenant_id=approver_tenant, incident_id=incident_id)
+        if action_row is None:
+            raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Action not found for this incident", "details": {}})
         approval_note = (req.note if req and getattr(req, "note", None) else None)
+        inc = _load_incident(db, incident_id, approver_tenant)
+        request_hash = _decision_request_hash(user, incident_id, action_id, "approve", req)
+        previous = _previous_decision_response(db, approver_tenant, idempotency_key, request_hash)
+        if previous is not None:
+            return build_response(data=previous)
+        _assert_unexpired(action_row)
+        if (action_row.action_plan or {}).get("requires_manual_plan"):
+            raise HTTPException(409, detail={"code": "MANUAL_PLAN_REQUIRED", "message": "This modified/manual plan has no validated executable adapter", "details": {}})
 
         SIMULATED_SECURITY_ACTIONS = {
             "block_ip_address",
@@ -223,77 +308,19 @@ async def approve_action(
 
         # Check if action_id or incident matches a simulated security response action
         is_simulated_action = (
-            action_id in SIMULATED_SECURITY_ACTIONS
-            or any(sec_act in action_id.lower() for sec_act in SIMULATED_SECURITY_ACTIONS)
-            or (req and getattr(req, "action_plan", None) and getattr(req, "action_plan", {}).get("action_type") in SIMULATED_SECURITY_ACTIONS)
+            action_row.action_type in SIMULATED_SECURITY_ACTIONS
         )
-
-        DEMO_INCIDENT_MAP = {
-            "inc-auth-pool-01": ("PostgreSQL Connection Pool Saturation in auth-service", "packages/rise-core/db/session.py"),
-            "inc-auth-latency-02": ("P99 Latency Spike on /auth/verify-token via JWKS Fetch", "apps/api/src/deps/auth.py"),
-            "inc-stripe-replay-03": ("Stripe Webhook Idempotency Key Replay Storm", "apps/api/src/routers/webhooks.py"),
-            "inc-ddos-ratelimit-04": ("DDoS Rate Limit Bypass on User Login", "apps/api/src/middleware/rate_limit.py"),
-            "inc-redis-stampede-05": ("Redis Session Cache Stampede on Token Refresh", "apps/api/src/routers/auth.py"),
-            "inc-kafka-rebalance-06": ("Kafka Consumer Group Rebalance Storm in ingestion-worker", "apps/api/src/services/telemetry.py"),
-            "inc-checkout-redis-07": ("Redis Cluster Cross-Slot Pipeline Storm & Key Eviction Surge in checkout-gateway", "packages/rise-core/db/session.py"),
-            "inc-sse-zombie-08": ("SSE Heartbeat Socket Desync & File Descriptor Exhaustion in notification-hub", "apps/api/src/routers/webhooks.py"),
-            "inc-redis-pool-09": ("Redis Connection Churn & Missing ConnectionPool in api-gateway", "apps/api/src/deps/redis.py"),
-        }
-
-        inc_title = "Security Incident Response"
+        inc_title = inc.title
         target_file = "packages/rise-core/db/session.py"
-        inc = None
-
-        if incident_id in DEMO_INCIDENT_MAP:
-            inc_title, target_file = DEMO_INCIDENT_MAP[incident_id]
-        else:
-            try:
-                import uuid
-                from datetime import datetime, timezone
-                from sqlalchemy import select
-                from db.models import Incident, Service
-                inc_uuid = uuid.UUID(incident_id)
-                inc = db.execute(select(Incident).where(Incident.id == inc_uuid)).scalar_one_or_none()
-                if inc:
-                    inc_title = inc.title
-                    # Mark incident as remediating upon approval (not resolved until verified!)
-                    inc.status = "remediating"
-                    inc.updated_at = datetime.now(timezone.utc)
-
-                    _is_monitor_incident = (
-                        inc.description
-                        and "[rise-monitor-meta:" in inc.description
-                    )
-                    _monitor_file = None
-                    if _is_monitor_incident:
-                        try:
-                            from apps.api.src.services.github_monitor import extract_monitor_meta
-                            _meta = extract_monitor_meta(inc.description)
-                            _monitor_file = (_meta or {}).get("file_path")
-                        except Exception:
-                            pass
-
-                    if _monitor_file:
-                        target_file = _monitor_file
-                    elif inc.affected_service_id:
-                        svc = db.execute(select(Service).where(Service.id == inc.affected_service_id)).scalar_one_or_none()
-                        if svc:
-                            if "webhook" in svc.name or "stripe" in svc.name:
-                                target_file = "apps/api/src/routers/webhooks.py"
-                            elif "auth" in svc.name or "login" in svc.name:
-                                target_file = "apps/api/src/deps/auth.py"
-                            elif "checkout" in svc.name or "db" in svc.name:
-                                target_file = "packages/rise-core/db/session.py"
-
-                    db.commit()
-            except Exception:
-                pass
+        recorded_snippet = (action_row.action_plan or {}).get("code_fix_snippet") or {}
+        if recorded_snippet.get("file"):
+            target_file = recorded_snippet["file"]
 
         # 1. Simulated Security Actions path
         if is_simulated_action:
-            sec_tool = action_id if action_id in SIMULATED_SECURITY_ACTIONS else (
-                next((s for s in SIMULATED_SECURITY_ACTIONS if s in action_id.lower()), "flag_for_soc_review")
-            )
+            if not allows_local_fallbacks():
+                raise HTTPException(409, detail={"code": "SIMULATED_ACTION_DISABLED", "message": "This security action has no live adapter", "details": {}})
+            sec_tool = action_row.action_type
             sim_plan = {
                 "action_type": sec_tool,
                 "action_steps": [{"tool": sec_tool, "params": {"incident_id": incident_id, "simulated": True}}],
@@ -311,6 +338,10 @@ async def approve_action(
             prior_anchor = _persisted_approval_anchor(db, action_row)
             if prior_anchor is not None and prior_anchor.plan_hash != approved_hash:
                 raise _action_plan_changed_error(prior_anchor.plan_hash, approved_hash)
+            anchor = _authorize_before_execution(
+                db, action=action_row, user=user, plan_hash=approved_hash,
+                note=approval_note, key=idempotency_key, request_hash=request_hash,
+            )
 
             sim_state = {
                 "tenant_id": str(user.tenant_id),
@@ -341,36 +372,6 @@ async def approve_action(
             ver_status = ver_data.get("status", "passed")
             exec_status = "verified_success" if ver_status in ("passed", "pass") else "failed"
 
-            # Persist the durable human-approval anchor (ADR-005). Fail-loud, and a
-            # no-op for demo actions with no DB row. Recorded post-execution so the
-            # anchor reflects an approval that actually ran.
-            if action_row is not None:
-                try:
-                    _persist_approval_anchor(
-                        db,
-                        action=action_row,
-                        tenant_id=approver_tenant,
-                        user_id=user.user_id,
-                        decision="approved",
-                        note=approval_note,
-                        plan_hash=approved_hash,
-                    )
-                    db.commit()
-                except Exception as anchor_exc:
-                    db.rollback()
-                    logger.error(
-                        "Failed to persist approval anchor for action %s: %s",
-                        action_id, anchor_exc,
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail={
-                            "code": "APPROVAL_PERSIST_FAILED",
-                            "message": "Simulated action executed but its approval anchor could not be recorded.",
-                            "details": {"action_id": action_id},
-                        },
-                    ) from anchor_exc
-
             res = {
                 "status": "approved",
                 "execution_status": exec_status,
@@ -380,7 +381,11 @@ async def approve_action(
                 "execution_log": exec_log,
                 "verification_result": ver_data,
             }
+            _record_approval_response(db, action_row, anchor, res)
             return build_response(data=res)
+
+        if action_row.action_type != "code_fix_pr":
+            raise HTTPException(409, detail={"code": "ACTION_EXECUTOR_UNAVAILABLE", "message": "This action requires the persisted infrastructure execution workflow", "details": {}})
 
         # 2. Code-Fix Remediation Actions via canonical GitHub + LangGraph flow
         from apps.api.src.services.github_service import (
@@ -437,7 +442,7 @@ async def approve_action(
         # is the correct granularity. Mirrors the gateway's ResourceLockManager usage.
         resource_id = f"github:{GITHUB_OWNER}/{GITHUB_REPO}:{target_file}"
         try:
-            ResourceLockManager.acquire_lock(
+            resource_lock_token = ResourceLockManager.acquire_lock(
                 resource_id=resource_id,
                 owner_id=incident_id,
                 redis_client=redis_client,
@@ -454,6 +459,10 @@ async def approve_action(
             )
 
         try:
+            anchor = _authorize_before_execution(
+                db, action=action_row, user=user, plan_hash=current_plan_hash,
+                note=approval_note, key=idempotency_key, request_hash=request_hash,
+            )
             github_result = await commit_remediation_to_github(
                 incident_id=incident_id,
                 incident_title=inc_title,
@@ -464,7 +473,7 @@ async def approve_action(
             # read-only live-GitHub confirmation and does not need the lock held.
             ResourceLockManager.release_lock(
                 resource_id=resource_id,
-                lock_token=incident_id,
+                lock_token=resource_lock_token,
                 redis_client=redis_client,
             )
 
@@ -474,11 +483,7 @@ async def approve_action(
             logger.warning("Automated remediation failed closed for incident %s: %s (%s)", incident_id, err_msg, err_code)
 
             if inc:
-                try:
-                    inc.status = "investigating"
-                    db.commit()
-                except Exception:
-                    pass
+                inc.status = "investigating"
 
             # Fail-closed contract (ADR-004): the canonical GitHub path could not
             # perform a real write (e.g. no live credentials), so we must NOT report a
@@ -494,6 +499,7 @@ async def approve_action(
                 "requires_human": True,
                 "message": f"Action approved by operator, but automated remediation failed closed: {err_msg}. Routed to human review.",
             }
+            _record_approval_response(db, action_row, anchor, res)
             return build_response(data=res)
 
         # 3. Record the canonical GitHub remediation outcome, then independently verify.
@@ -521,13 +527,8 @@ async def approve_action(
             "result": result_summary,
         }
 
-        # Immutable audit record for the real GitHub remediation write. Persisted only for
-        # DB-backed incidents (demo incidents have no tenant/incident row to anchor to); a
-        # residual audit failure is logged and rolled back rather than losing the (already
-        # applied) remediation — the PR exists on GitHub regardless of this bookkeeping row.
-        # Immutable audit record for the real GitHub remediation write. Persisted only
-        # for DB-backed incidents (demo incidents have no tenant/incident row to anchor
-        # to). This uses the SAME hash-chained primitive as the MCP gateway
+        # Immutable audit record for the real GitHub remediation write. This uses
+        # the SAME hash-chained primitive as the MCP gateway
         # (write_audit_event -> create_audit_event) AND, matching the gateway's
         # fail-loud stance (AuditWriteError), a genuine audit-write failure is now
         # surfaced as a hard error rather than swallowed — an unrecorded remediation
@@ -548,20 +549,7 @@ async def approve_action(
                     },
                     incident_id=inc.id,
                 )
-                # Persist the durable human-approval anchor in the SAME fail-loud
-                # commit as the audit event (ADR-005): user + decision + the exact
-                # plan_hash that was executed, bound to this action. report_generator
-                # reads this row; a later re-approval compares against it.
-                if action_row is not None:
-                    _persist_approval_anchor(
-                        db,
-                        action=action_row,
-                        tenant_id=approver_tenant,
-                        user_id=user.user_id,
-                        decision="approved",
-                        note=approval_note,
-                        plan_hash=current_plan_hash,
-                    )
+                # Authorization was already committed before the write (ADR-005).
                 db.commit()
             except Exception as audit_exc:
                 db.rollback()
@@ -597,20 +585,12 @@ async def approve_action(
             exec_status = "verified_success"
             app_status = "approved"
             if inc:
-                try:
-                    inc.status = "resolved"
-                    db.commit()
-                except Exception:
-                    pass
+                inc.status = "resolved"
         else:
             exec_status = "failed"
             app_status = "requires_human"
             if inc:
-                try:
-                    inc.status = "investigating"
-                    db.commit()
-                except Exception:
-                    pass
+                inc.status = "investigating"
 
         res = {
             "status": app_status,
@@ -625,9 +605,10 @@ async def approve_action(
             "pr_number": github_result.get("pr_number"),
             "verification_result": ver_data,
         }
+        _record_approval_response(db, action_row, anchor, res)
         return build_response(data=res)
     finally:
-        release_single_use_approval_lock(action_id)
+        ResourceLockManager.release_lock(approval_key, approval_token, redis_client)
 
 
 
@@ -638,12 +619,16 @@ async def execute_action(
     req: Optional[ActionExecuteRequest] = None,
     user: UserContext = Depends(require_role("approver")),
 ):
-    # NOTE (ADR-005): this is a raw staging execution harness, NOT the approval-
+    if not allows_local_fallbacks():
+        raise HTTPException(
+            403, detail={"code": "EXECUTION_HARNESS_DISABLED", "message": "Use the persisted approval workflow in deployed environments", "details": {}},
+        )
+    # NOTE (ADR-005): this is a raw local execution harness, NOT the approval-
     # bearing path. Its `approved_hash` is derived from the request itself, so it
     # proves transport integrity only — it does NOT carry a persisted human-approval
     # anchor. The canonical, anchored human-approval path is `approve_action` above,
     # which persists an `Approval` row and compares against it. This endpoint stays
-    # staging-only and un-anchored by design.
+    # local-only and un-anchored by design.
     action_plan = (req.action_plan if req else None) or {
         "action_type": "restart_pod",
         "action_steps": [{"tool": "restart_pod", "params": {"namespace": "staging", "pod_name": "auth-service-7890"}}],
@@ -696,28 +681,43 @@ async def reject_action(
     action_id: str,
     req: ActionRejectRequest,
     user: UserContext = Depends(require_role("approver")),
+    idempotency_key: str = Depends(require_idempotency_key),
     db: Session = Depends(get_db),
 ):
-    # Persist the rejection when the action exists as a real DB row; a rejection
-    # is a terminal decision, so we record it and set the action status to
-    # 'rejected' inside the same transaction as the audit event.
-    action = _load_action(db, action_id)
-    if action is not None:
-        before = {"status": action.status}
-        action.status = "rejected"
-        db.flush()
+    action = _load_action(db, action_id, tenant_id=_parse_uuid(user.tenant_id), incident_id=incident_id)
+    if action is None:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Action not found for this incident", "details": {}})
+    request_hash = _decision_request_hash(user, incident_id, action_id, "reject", req)
+    previous = _previous_decision_response(db, action.tenant_id, idempotency_key, request_hash)
+    if previous is not None:
+        return build_response(data=previous)
+    _assert_unexpired(action)
+    res = ActionRejectResponse(status="rejected").model_dump()
+    _update_pending_action(db, action, {"status": "rejected"})
+    try:
+        anchor = _persist_approval_anchor(
+            db, action=action, tenant_id=action.tenant_id, user_id=user.user_id,
+            decision="rejected", note=req.reason,
+            plan_hash=compute_action_plan_hash(action.action_plan),
+            idempotency_key=idempotency_key, request_hash=request_hash,
+        )
+        anchor.response = res
         write_audit_event(
             db=db,
             actor=f"user:{user.user_id}",
             tenant_id=_parse_uuid(user.tenant_id),
             action="action.rejected",
-            before_state=before,
+            before_state={"status": "pending_approval"},
             after_state={"status": "rejected", "reason": req.reason},
             incident_id=action.incident_id,
         )
         db.commit()
-
-    res = ActionRejectResponse(status="rejected").model_dump()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(500, detail={"code": "APPROVAL_PERSIST_FAILED", "message": "Rejection could not be recorded", "details": {}}) from exc
     return build_response(data=res)
 
 
@@ -747,6 +747,7 @@ async def modify_action(
     action_id: str,
     req: ActionModifyRequest,
     user: UserContext = Depends(require_role("approver")),
+    idempotency_key: str = Depends(require_idempotency_key),
     db: Session = Depends(get_db),
 ):
     new_tier = _risk_tier_for_plan(req.modified_plan)
@@ -754,20 +755,34 @@ async def modify_action(
     # Persist the operator-modified plan and re-evaluated risk tier when the
     # action row exists; the action returns to pending_approval for a fresh
     # approval decision on the revised plan.
-    action = _load_action(db, action_id)
-    if action is not None:
-        before = {"status": action.status, "risk_tier": action.risk_tier}
-        modified_plan = {
-            "description": req.modified_plan.description,
-            "action_steps": [{"tool": "manual_step", "params": {"text": s}} for s in (req.modified_plan.steps or [])],
-            "rollback_plan": req.modified_plan.rollback_plan,
-            "plan_rationale": req.modified_plan.description,
-            "requires_manual_plan": True,
-        }
-        action.action_plan = modified_plan
-        action.risk_tier = new_tier
-        action.status = "pending_approval"
-        db.flush()
+    action = _load_action(db, action_id, tenant_id=_parse_uuid(user.tenant_id), incident_id=incident_id)
+    if action is None:
+        raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "Action not found for this incident", "details": {}})
+    request_hash = _decision_request_hash(user, incident_id, action_id, "modify", req)
+    previous = _previous_decision_response(db, action.tenant_id, idempotency_key, request_hash)
+    if previous is not None:
+        return build_response(data=previous)
+    _assert_unexpired(action)
+    before = {"status": action.status, "risk_tier": action.risk_tier}
+    modified_plan = {
+        "action_type": action.action_type,
+        "description": req.modified_plan.description,
+        "action_steps": [{"tool": "manual_step", "params": {"text": s}} for s in (req.modified_plan.steps or [])],
+        "rollback_plan": ([{"tool": "manual_step", "params": {"text": req.modified_plan.rollback_plan}}]
+                          if req.modified_plan.rollback_plan else []),
+        "plan_rationale": req.modified_plan.description,
+        "requires_manual_plan": True,
+    }
+    res = ActionModifyResponse(status="re-evaluated", new_risk_tier=new_tier).model_dump()
+    _update_pending_action(db, action, {"action_plan": modified_plan, "risk_tier": new_tier})
+    try:
+        anchor = _persist_approval_anchor(
+            db, action=action, tenant_id=action.tenant_id, user_id=user.user_id,
+            decision="modified", note=req.modified_plan.description,
+            plan_hash=compute_action_plan_hash(modified_plan),
+            idempotency_key=idempotency_key, request_hash=request_hash,
+        )
+        anchor.response = res
         write_audit_event(
             db=db,
             actor=f"user:{user.user_id}",
@@ -778,11 +793,13 @@ async def modify_action(
             incident_id=action.incident_id,
         )
         db.commit()
-
-    res = ActionModifyResponse(
-        status="re-evaluated",
-        new_risk_tier=new_tier,
-    ).model_dump()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Action modification persistence failed")
+        raise HTTPException(500, detail={"code": "APPROVAL_PERSIST_FAILED", "message": "Modification could not be recorded", "details": {}}) from exc
     return build_response(data=res)
 
 
@@ -793,7 +810,7 @@ async def list_actions(
     db: Session = Depends(get_db),
 ):
     tenant_id = _parse_uuid(user.tenant_id)
-    incident = _load_incident(db, incident_id)
+    incident = _load_incident(db, incident_id, tenant_id)
     service_name = _service_name(db, incident)
     _, actions_list = build_actions_view(db, tenant_id, incident, service_name)
     return build_response(data=actions_list)

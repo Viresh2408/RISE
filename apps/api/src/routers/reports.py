@@ -12,6 +12,7 @@ from db.models import Incident, Service
 from schemas import AutonomyReportDTO, MttrReportDTO
 from apps.api.src.deps import get_db, require_role, UserContext
 from apps.api.src.middleware.envelope import build_response
+from apps.api.src.services.incident_views import _parse_uuid
 
 router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 
@@ -96,22 +97,25 @@ async def get_mttr_report(
     user: UserContext = Depends(require_role("viewer")),
 ):
     now = datetime.now(timezone.utc)
+    tenant_id = _parse_uuid(user.tenant_id)
     start_dt = _parse_date(from_date, now - timedelta(days=30))
     end_dt = _parse_date(to_date, now)
 
     # Query DB incidents matching date range
     try:
-        stmt = select(Incident).where(Incident.created_at >= start_dt, Incident.created_at <= end_dt)
+        stmt = select(Incident).where(Incident.tenant_id == tenant_id, Incident.created_at >= start_dt, Incident.created_at <= end_dt)
         incidents = list(db.scalars(stmt).all())
     except Exception:
-        incidents = list(db.scalars(select(Incident)).all())
+        incidents = list(db.scalars(select(Incident).where(Incident.tenant_id == tenant_id)).all())
         incidents = [i for i in incidents if i.created_at and start_dt <= (_to_utc(i.created_at) or i.created_at) <= end_dt]
 
     if service:
-        svc_stmt = select(Service).where(Service.name.ilike(f"%{service}%"))
+        svc_stmt = select(Service).where(Service.tenant_id == tenant_id, Service.name.ilike(f"%{service}%"))
         matching_svc = db.scalars(svc_stmt).first()
         if matching_svc:
             incidents = [i for i in incidents if i.affected_service_id == matching_svc.id]
+        else:
+            incidents = []
 
     trend = _generate_dynamic_mttr_trend(start_dt, end_dt, incidents)
 
@@ -159,15 +163,16 @@ async def get_autonomy_report(
     user: UserContext = Depends(require_role("viewer")),
 ):
     now = datetime.now(timezone.utc)
+    tenant_id = _parse_uuid(user.tenant_id)
     start_dt = _parse_date(from_date, now - timedelta(days=30))
     end_dt = _parse_date(to_date, now)
 
     # Query DB incidents matching date range
     try:
-        stmt = select(Incident).where(Incident.created_at >= start_dt, Incident.created_at <= end_dt)
+        stmt = select(Incident).where(Incident.tenant_id == tenant_id, Incident.created_at >= start_dt, Incident.created_at <= end_dt)
         incidents = list(db.scalars(stmt).all())
     except Exception:
-        incidents = list(db.scalars(select(Incident)).all())
+        incidents = list(db.scalars(select(Incident).where(Incident.tenant_id == tenant_id)).all())
         incidents = [i for i in incidents if i.created_at and start_dt <= (_to_utc(i.created_at) or i.created_at) <= end_dt]
 
     total_count = len(incidents)

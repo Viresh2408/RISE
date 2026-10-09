@@ -4,13 +4,16 @@ import React, { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '../lib/auth-context';
 
+const PUBLIC_PATHS = ['/', '/login', '/design-system'];
+
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
-  const PUBLIC_PATHS = ['/', '/login'];
-
+  // '/design-system' is a static, data-free primitive/token showcase used for
+  // visual verification — it makes no API calls and reads no session data, so
+  // it is public like the marketing page. All data routes stay auth-gated.
   useEffect(() => {
     if (!loading && !session && !PUBLIC_PATHS.includes(pathname)) {
       router.push('/login');

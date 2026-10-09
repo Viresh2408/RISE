@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -93,11 +93,21 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Date-range filters
-  const [fromDate, setFromDate] = useState('2026-07-01');
-  const [toDate, setToDate] = useState('2026-08-09');
+  // Date-range filters. Default to the last 30 days, computed on the client
+  // (in a mount effect) rather than a hardcoded window — a fixed range would
+  // present a stale historical slice as the current default and only drift
+  // further out of date over time.
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
-  const fetchReports = async () => {
+  useEffect(() => {
+    const end = new Date();
+    const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+    setToDate(end.toISOString().split('T')[0]);
+    setFromDate(start.toISOString().split('T')[0]);
+  }, []);
+
+  const fetchReports = useCallback(async () => {
     const token = session?.token || '';
     setLoading(true);
     try {
@@ -113,63 +123,32 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchReports();
   }, [session, fromDate, toDate]);
 
-  /* Calculate dynamic telemetry metrics matching the selected date window */
-  const getDaysDiff = (d1: string, d2: string) => {
-    const start = new Date(d1).getTime();
-    const end = new Date(d2).getTime();
-    const diff = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-    return isNaN(diff) ? 30 : diff;
-  };
+  useEffect(() => {
+    if (!fromDate || !toDate) return;
+    fetchReports();
+  }, [fetchReports, fromDate, toDate]);
 
-  const daySpan = getDaysDiff(fromDate, toDate);
-  const fallbackTotalIncidents = Math.max(8, Math.round(daySpan * 4.2));
-  const fallbackAutoResolvedPct = Math.min(88, Math.max(52, Math.round(62 + (daySpan % 22))));
-  const fallbackMttr = Math.max(3.8, Math.round((12.5 - Math.min(6.5, daySpan / 14)) * 10) / 10);
-  const fallbackReduction = Math.min(94, Math.max(48, Math.round(64 + (daySpan % 18))));
+  /* Resolve report metrics from the API WITHOUT fabricating fallbacks. A
+     missing metric is rendered as an explicit "—"/empty state downstream —
+     never a plausible-looking invented number (see CLAUDE.md honesty rule). */
+  const num = (v: number | null | undefined): number | null =>
+    typeof v === 'number' && !Number.isNaN(v) ? v : null;
 
-  const displayMttr = {
-    overall_avg_minutes: mttr?.overall_avg_minutes ?? mttr?.avg_mttr_minutes ?? fallbackMttr,
-    reduction_pct: mttr?.reduction_pct ?? fallbackReduction,
-    data_points: mttr?.data_points ?? [
-      { service: 'auth-service', avg_minutes: 6.2, incident_count: 14, period: 'selected_range' },
-      { service: 'payments-api', avg_minutes: 9.1, incident_count: 8, period: 'selected_range' },
-      { service: 'notification-worker', avg_minutes: 4.7, incident_count: 22, period: 'selected_range' },
-      { service: 'db-cluster', avg_minutes: 18.3, incident_count: 3, period: 'selected_range' },
-      { service: 'api-gateway', avg_minutes: 7.0, incident_count: 11, period: 'selected_range' },
-    ],
-  };
-
-  const displayAutonomy = {
-    auto_resolved_pct: autonomy?.auto_resolved_pct ?? fallbackAutoResolvedPct,
-    human_approved_pct: autonomy?.human_approved_pct ?? Math.round(Math.max(0, 100 - (autonomy?.auto_resolved_pct ?? fallbackAutoResolvedPct) - 6)),
-    human_rejected_pct: autonomy?.human_rejected_pct ?? autonomy?.rejected_pct ?? 6,
-    total_incidents: autonomy?.total_incidents ?? fallbackTotalIncidents,
-    by_severity: autonomy?.by_severity ?? {
-      SEV1: Math.max(1, Math.round(fallbackTotalIncidents * 0.05)),
-      SEV2: Math.max(2, Math.round(fallbackTotalIncidents * 0.20)),
-      SEV3: Math.max(4, Math.round(fallbackTotalIncidents * 0.45)),
-      SEV4: Math.max(1, Math.round(fallbackTotalIncidents * 0.30)),
-    },
-  };
+  const mttrAvg = num(mttr?.overall_avg_minutes ?? mttr?.avg_mttr_minutes);
+  const mttrReduction = num(mttr?.reduction_pct);
+  const autoResolvedPct = num(autonomy?.auto_resolved_pct);
+  const humanApprovedPct = num(autonomy?.human_approved_pct);
+  const humanRejectedPct = num(autonomy?.human_rejected_pct ?? autonomy?.rejected_pct);
+  const totalIncidents = num(autonomy?.total_incidents);
 
   const trendData = (mttr?.trend && mttr.trend.length > 0)
     ? mttr.trend.map((t) => ({ date: t.date, mttr: t.mttr_minutes ?? t.mttr ?? 0 }))
-    : Array.from({ length: 7 }).map((_, i) => {
-        const start = new Date(fromDate).getTime();
-        const end = new Date(toDate).getTime();
-        const validStart = isNaN(start) ? new Date('2026-07-01').getTime() : start;
-        const validEnd = isNaN(end) ? new Date('2026-08-09').getTime() : end;
-        const pt = new Date(validStart + ((validEnd - validStart) / 6) * i);
-        const dateStr = pt.toISOString().split('T')[0];
-        const mttrVal = Math.max(3.5, Math.round((24 - i * 2.6) * 10) / 10);
-        return { date: dateStr, mttr: mttrVal };
-      });
+    : [];
+
+  const hasAutonomyBreakdown =
+    autoResolvedPct !== null && humanApprovedPct !== null && humanRejectedPct !== null;
 
   return (
     <div className="min-h-screen bg-[#0E0B14] text-[#FAF7F2]">
@@ -221,6 +200,18 @@ export default function ReportsPage() {
           </div>
         </div>
 
+        {/* Honest error surface — previously `error` was captured in state but
+            never rendered, so a failed fetch silently showed stale/empty UI. */}
+        {error && !loading && (
+          <div className="rounded-xl border border-[#EF4444]/30 bg-[#EF4444]/10 p-4 flex items-start gap-3">
+            <XCircle className="w-5 h-5 text-[#EF4444] flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-[#EF4444]">Failed to load reports</p>
+              <p className="text-xs font-mono text-[#E8E2D9]/70 mt-0.5">{error}</p>
+            </div>
+          </div>
+        )}
+
         {/* ── KPI STAT CARDS (reportStat scale: 2.5rem/700/tabular-nums) ── */}
         {loading ? (
           <CardSkeleton count={4} variant="report" />
@@ -229,7 +220,7 @@ export default function ReportsPage() {
             {[
               {
                 label: 'Avg MTTR',
-                value: `${displayMttr.overall_avg_minutes}m`,
+                value: mttrAvg !== null ? `${mttrAvg}m` : '—',
                 sub: 'Mean time to resolve',
                 icon: Clock,
                 borderColor: 'border-l-[#F59E0B]',
@@ -237,7 +228,7 @@ export default function ReportsPage() {
               },
               {
                 label: 'MTTR Reduction',
-                value: `-${displayMttr.reduction_pct}%`,
+                value: mttrReduction !== null ? `-${mttrReduction}%` : '—',
                 sub: 'vs manual baseline',
                 icon: TrendingDown,
                 borderColor: 'border-l-[#22C55E]',
@@ -245,7 +236,7 @@ export default function ReportsPage() {
               },
               {
                 label: 'Auto-Resolved',
-                value: `${displayAutonomy.auto_resolved_pct}%`,
+                value: autoResolvedPct !== null ? `${autoResolvedPct}%` : '—',
                 sub: 'Zero-human intervention',
                 icon: Zap,
                 borderColor: 'border-l-[#8B5CF6]',
@@ -253,7 +244,7 @@ export default function ReportsPage() {
               },
               {
                 label: 'Total Incidents',
-                value: (displayAutonomy.total_incidents ?? 0).toString(),
+                value: totalIncidents !== null ? totalIncidents.toString() : '—',
                 sub: 'Selected date window',
                 icon: Activity,
                 borderColor: 'border-l-[#E8E2D9]',
@@ -288,25 +279,35 @@ export default function ReportsPage() {
             </div>
 
             <div className="h-64 w-full pt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E8E2D9" strokeOpacity={0.1} />
-                  <XAxis dataKey="date" stroke="#6B6560" fontSize={12} tickLine={false} />
-                  <YAxis stroke="#6B6560" fontSize={12} tickLine={false} unit="m" />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#0E0B14', borderColor: 'rgba(232,226,217,0.15)', borderRadius: '8px' }}
-                    itemStyle={{ color: '#8B5CF6', fontSize: '12px' }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="mttr"
-                    stroke="#8B5CF6"
-                    strokeWidth={3}
-                    dot={{ fill: '#8B5CF6', r: 4 }}
-                    activeDot={{ r: 6 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              {trendData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E8E2D9" strokeOpacity={0.1} />
+                    <XAxis dataKey="date" stroke="#6B6560" fontSize={12} tickLine={false} />
+                    <YAxis stroke="#6B6560" fontSize={12} tickLine={false} unit="m" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0E0B14', borderColor: 'rgba(232,226,217,0.15)', borderRadius: '8px' }}
+                      itemStyle={{ color: '#8B5CF6', fontSize: '12px' }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="mttr"
+                      stroke="#8B5CF6"
+                      strokeWidth={3}
+                      dot={{ fill: '#8B5CF6', r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center">
+                  <BarChart3 className="w-8 h-8 text-[#6B6560] mb-3" />
+                  <p className="text-sm font-semibold text-[#E8E2D9]">No trend data</p>
+                  <p className="text-xs font-mono text-[#6B6560] mt-1">
+                    The reporting API returned no MTTR trend for this range.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -319,13 +320,23 @@ export default function ReportsPage() {
               </h2>
             </div>
 
-            <DonutChart
-              segments={[
-                { label: 'Auto-Resolved', value: displayAutonomy.auto_resolved_pct, color: '#22C55E' }, // status-approved green
-                { label: 'Human Approved', value: displayAutonomy.human_approved_pct, color: '#F59E0B' }, // status-pending amber
-                { label: 'Human Rejected', value: displayAutonomy.human_rejected_pct, color: '#EF4444' }, // status-rejected red
-              ]}
-            />
+            {hasAutonomyBreakdown ? (
+              <DonutChart
+                segments={[
+                  { label: 'Auto-Resolved', value: autoResolvedPct as number, color: '#22C55E' }, // status-approved green
+                  { label: 'Human Approved', value: humanApprovedPct as number, color: '#F59E0B' }, // status-pending amber
+                  { label: 'Human Rejected', value: humanRejectedPct as number, color: '#EF4444' }, // status-rejected red
+                ]}
+              />
+            ) : (
+              <div className="min-h-[144px] flex flex-col items-center justify-center text-center">
+                <ShieldCheck className="w-8 h-8 text-[#6B6560] mb-3" />
+                <p className="text-sm font-semibold text-[#E8E2D9]">No autonomy data</p>
+                <p className="text-xs font-mono text-[#6B6560] mt-1">
+                  The reporting API returned no resolution breakdown for this range.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </main>

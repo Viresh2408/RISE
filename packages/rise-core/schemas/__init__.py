@@ -1,4 +1,22 @@
-from .api import *  # noqa: F401, F403
+from .api import *  # noqa: F401, F403 — preserve public compatibility exports
+from .api import (
+    ActionApproveRequest,
+    ActionApproveResponse,
+    ActionExecuteRequest,
+    ActionExecuteResponse,
+    ActionModifyRequest,
+    ActionModifyResponse,
+    ActionPlanDTO,
+    ActionRejectRequest,
+    ActionRejectResponse,
+    DecisionDTO,
+    RemediationActionDTO,
+    IncidentCreateRequest,
+    IncidentUpdateRequest,
+    IncidentDTO,
+    IncidentDetailDTO,
+    ImpactDTO,
+)
 from .agent_state import (
     # Enumerations
     SeverityHint,

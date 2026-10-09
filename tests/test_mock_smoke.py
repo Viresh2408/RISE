@@ -203,7 +203,7 @@ class TestApiApproval:
             json={"note": "no idempotency key"},
         ).json()["error"]["code"] == "VALIDATION_ERROR"
 
-    def test_approve_with_idempotency_key_returns_200(self, monkeypatch):
+    def test_missing_action_with_idempotency_key_is_rejected(self, monkeypatch):
         # Hermetic fail-closed: stub the canonical GitHub path to its no-credentials
         # result so the suite never writes to the live repo (a real GITHUB_TOKEN may be
         # present in .env, and actions.py imports github_service lazily, which re-runs
@@ -227,26 +227,20 @@ class TestApiApproval:
             headers=headers,
             json={"note": "LGTM"},
         )
-        assert r.status_code == 200
+        assert r.status_code == 404
         body = r.json()
-        # Fail-closed contract: no live GitHub creds in test env → correct refusal,
-        # surfaced as requires_human (not a fabricated 'approved').
-        assert body["data"]["status"] == "requires_human"
-        assert body["error"] is None
+        assert body["data"] is None
+        assert body["error"]["code"] == "NOT_FOUND"
 
-    @pytest.mark.parametrize("action_id,code", [
-        ("plan-changed", "ACTION_PLAN_CHANGED"),
-        ("expired", "APPROVAL_EXPIRED"),
-        ("locked", "RESOURCE_LOCKED"),
-    ])
-    def test_409_conflict_error_codes(self, action_id, code):
+    @pytest.mark.parametrize("action_id", ["plan-changed", "expired", "locked"])
+    def test_fixture_names_do_not_create_real_approval_targets(self, action_id):
         headers = {**APPROVER, "Idempotency-Key": str(uuid.uuid4())}
         body = client.post(
             f"/api/v1/incidents/inc-001/actions/{action_id}/approve",
             headers=headers,
             json={"note": "test"},
         ).json()
-        assert body["error"]["code"] == code
+        assert body["error"]["code"] == "NOT_FOUND"
 
 
 class TestApiReports:
@@ -727,6 +721,7 @@ class TestActionPlannerPreLLMGate:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.usefixtures("offline_agent_io")
 class TestEndToEndFlow:
     """Minimal graph traversal tests using LangGraph MemorySaver."""
 

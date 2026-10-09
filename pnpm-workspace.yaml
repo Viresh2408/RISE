@@ -3,3 +3,9 @@ packages:
   - 'packages/*'
 allowBuilds:
   esbuild: true
+  sharp: true
+  unrs-resolver: true
+overrides:
+  postcss: 8.5.28
+  '@typescript-eslint/eslint-plugin': 8.71.0
+  '@typescript-eslint/parser': 8.71.0

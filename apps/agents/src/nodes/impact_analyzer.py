@@ -235,6 +235,8 @@ async def run_impact_analyzer_agent(
                     risk_score=fallback_score,
                 )
 
+    if result_obj is None:
+        raise RuntimeError("Impact analysis produced no assessment")
     new_state = dict(state)
     new_state["impact_assessment"] = result_obj.model_dump()
     if topology_missing:

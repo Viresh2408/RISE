@@ -158,7 +158,7 @@ def test_chaos_scenario_llm_provider_outage_failover():
     assert len(orphaned) == 0, f"Found orphaned incidents after provider outage failover: {orphaned}"
 
 
-def test_chaos_scenario_mcp_server_failure_escalation():
+def test_chaos_scenario_mcp_server_failure_escalation(monkeypatch):
     """Chaos Scenario 3: MCP Server connection failure mid-tool execution.
     
     Verifies retry and graceful escalation without leaving stuck/orphaned state.
@@ -172,8 +172,28 @@ def test_chaos_scenario_mcp_server_failure_escalation():
     tenant_id = str(uuid.uuid4())
     payload = {"summary": "MCP server failure simulation", "source": "k8s_mcp"}
     
-    # Run graph - should complete or escalate gracefully
-    state = run_incident(tenant_id=tenant_id, incident_id=incident_id, event_payload=payload)
+    # Isolate the intended execution-node outage. Do not accidentally "pass" by
+    # failing an unrelated live LLM/vector fetch before reaching execution.
+    from apps.agents.src.orchestrator import graph
+    attempts = []
+
+    def failed_execution(state):
+        attempts.append(state["incident_id"])
+        raise ConnectionError("execution transport unavailable")
+
+    monkeypatch.setattr(graph, "node_execute", failed_execution)
+    app = graph.create_orchestrator_graph()
+    state = app.invoke({
+        "tenant_id": tenant_id, "incident_id": incident_id, "event_payload": payload,
+        "context": {"fixture": True}, "hypotheses": [{"fixture": True}],
+        "root_cause": {"confidence": 0.9}, "impact_assessment": {"blast_radius_services": []},
+        "decision": {"requires_approval": False, "risk_tier": "low"},
+        "action_plan": {"action_type": "restart_pod", "action_steps": [{"tool": "restart_pod", "params": {}}],
+                        "rollback_plan": [{"tool": "restart_pod", "params": {}}], "plan_rationale": "fixture"},
+    }, config={"configurable": {"thread_id": str(uuid.uuid4())}})
+    assert attempts == [incident_id, incident_id]
+    assert state["status"] == "escalated"
+    assert "execution transport unavailable" in state["error"]
     
     detector.update_status(incident_id, inc_status="escalated", run_status="escalated")
 

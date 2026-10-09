@@ -1,14 +1,20 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { Navbar } from '../../../components/navbar';
 import { ActionControls } from '../../../components/action-modals';
-import { AgentFlowDiagram } from '../../../components/agent-flow-diagram';
 import { CardSkeleton } from '../../../components/shared/CardSkeleton';
 import { EmptyState } from '../../../components/shared/EmptyState';
-import { IncidentDetailDTO, RiskTier, RootCauseDTO, DecisionDTO } from '../../../lib/types';
+import { IncidentDetailDTO, RiskTier } from '../../../lib/types';
+import {
+  SEVERITY_META,
+  INCIDENT_STATUS_META,
+  TONE_BADGE_CLASSES,
+  resolveConfidence,
+  type ResolvedConfidence,
+} from '../../../components/rise/tokens';
 import { apiClient } from '../../../lib/api-client';
 import { useAuth } from '../../../lib/auth-context';
 import { tx } from '../../../lib/typography';
@@ -18,7 +24,6 @@ import {
   Activity,
   CheckCircle2,
   Clock,
-  Lock,
   RefreshCw,
   ShieldCheck,
   AlertTriangle,
@@ -28,26 +33,29 @@ import {
   RotateCcw,
   Link2,
   XCircle,
+  X,
   AlertCircle,
   ChevronDown,
   ChevronUp,
-  Terminal,
-  Search,
-  Sparkles,
-  Info,
   GitBranch,
   Bug,
   Eye,
   ExternalLink,
   GitMerge,
+  type LucideIcon,
 } from 'lucide-react';
 
 
 /* ── Confidence Arc Indicator Helper ── */
-function ConfidenceArc({ score }: { score: number }) {
+// Honest: renders only what resolveConfidence reports. A not-computed score
+// draws the track ring alone and shows "—" / "Not computed" rather than
+// fabricating a percentage (see CLAUDE.md confidence-honesty rule).
+function ConfidenceArc({ resolved }: { resolved: ResolvedConfidence }) {
   const radius = 38;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - score * circumference;
+  const fraction = resolved.fraction ?? 0;
+  const strokeDashoffset = circumference - fraction * circumference;
+  const computed = resolved.state === 'computed';
 
   return (
     <div className="relative inline-flex items-center justify-center flex-shrink-0">
@@ -61,25 +69,27 @@ function ConfidenceArc({ score }: { score: number }) {
           strokeOpacity="0.12"
           fill="transparent"
         />
-        <circle
-          cx="56"
-          cy="56"
-          r={radius}
-          stroke="#8B5CF6"
-          strokeWidth="6"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-          fill="transparent"
-          className="transition-all duration-700 ease-out"
-        />
+        {computed && (
+          <circle
+            cx="56"
+            cy="56"
+            r={radius}
+            stroke="#8B5CF6"
+            strokeWidth="6"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            fill="transparent"
+            className="transition-all duration-700 ease-out"
+          />
+        )}
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-1 pointer-events-none">
-        <span className="font-display text-xl font-bold text-[#8B5CF6] tabular-nums leading-none">
-          {Math.round(score * 100)}%
+        <span className={`font-display text-xl font-bold tabular-nums leading-none ${computed ? 'text-[#8B5CF6]' : 'text-[#6B6560]'}`}>
+          {resolved.display}
         </span>
         <span className="text-[9px] font-mono font-semibold uppercase tracking-wider text-[#6B6560] mt-1">
-          Confidence
+          {computed ? 'Confidence' : 'Not computed'}
         </span>
       </div>
     </div>
@@ -421,84 +431,20 @@ function GitHubSourceEvidencePanel({
   );
 }
 
-/* ── PS Named Agent Role Mapping Helper (Demo Mode) ── */
-function getPsAgentRole(event: string, text: string = ''): {
-  role: string;
-  badgeStyle: string;
-  description: string;
-  sourceAgent: string;
-} {
-  const combined = (event + ' ' + text).toLowerCase();
-
-  if (
-    combined.includes('alert') ||
-    combined.includes('ingest') ||
-    combined.includes('context') ||
-    combined.includes('loki') ||
-    combined.includes('prometheus') ||
-    combined.includes('log') ||
-    combined.includes('security-log') ||
-    combined.includes('vector search') ||
-    combined.includes('normalized') ||
-    combined.includes('collect')
-  ) {
-    return {
-      role: 'Log Analysis Agent',
-      badgeStyle: 'bg-[#8B5CF6]/15 text-[#8B5CF6] border-[#8B5CF6]/30',
-      description: 'Ingests, normalizes, correlates security log events',
-      sourceAgent: 'Context Builder + Ingestion',
-    };
-  }
-
-  if (
-    combined.includes('root cause') ||
-    combined.includes('investigat') ||
-    combined.includes('synthes') ||
-    combined.includes('hypothes') ||
-    combined.includes('evidence') ||
-    combined.includes('rca')
-  ) {
-    return {
-      role: 'Threat Investigation Agent',
-      badgeStyle: 'bg-[#F5A623]/15 text-[#F5A623] border-[#F5A623]/30',
-      description: 'Generates hypotheses, determines root cause with confidence, cites evidence',
-      sourceAgent: 'Investigation + Root Cause Agents',
-    };
-  }
-
-  if (combined.includes('policy') || combined.includes('opa') || combined.includes('risk') || combined.includes('approval')) {
-    return {
-      role: 'Policy & Governance Engine',
-      badgeStyle: 'bg-[#EF4444]/15 text-[#EF4444] border-[#EF4444]/30',
-      description: 'Evaluates OPA risk policies & routes human-in-the-loop approvals',
-      sourceAgent: 'OPA Risk & Decision Engine',
-    };
-  }
-
-  if (combined.includes('remediat') || combined.includes('patch') || combined.includes('plan') || combined.includes('action')) {
-    return {
-      role: 'Remediation Decision Agent',
-      badgeStyle: 'bg-[#3B82F6]/15 text-[#3B82F6] border-[#3B82F6]/30',
-      description: 'Formulates patch with real code grounding & rollback plan',
-      sourceAgent: 'Decision & Plan Engine',
-    };
-  }
-
-  if (combined.includes('verif') || combined.includes('probe') || combined.includes('rollback') || combined.includes('health')) {
-    return {
-      role: 'Self-Healing & Verification Agent',
-      badgeStyle: 'bg-[#22C55E]/15 text-[#22C55E] border-[#22C55E]/30',
-      description: 'Conducts independent live verification & auto-rollback',
-      sourceAgent: 'Verification Agent',
-    };
-  }
-
-  return {
-    role: 'Autonomous Agent Orchestrator',
-    badgeStyle: 'bg-white/10 text-[#E8E2D9] border-white/20',
-    description: 'LangGraph multi-agent state orchestration',
-    sourceAgent: 'RISE LangGraph Core',
-  };
+/* ── Honest "not computed / unavailable" section placeholder ── */
+// Renders an explicit unavailable state for a core analytical section when the
+// agent pipeline has not yet produced that data — instead of hiding the section
+// silently or fabricating a plausible value (Phase 1 honest-state contract).
+function SectionUnavailable({ icon: Icon, title, message }: { icon: LucideIcon; title: string; message: string }) {
+  return (
+    <div className="rounded-xl border border-[#E8E2D9]/15 bg-[#151121] p-6 space-y-2">
+      <h2 className={tx('sectionHeader', 'text-[#FAF7F2] flex items-center gap-2')}>
+        <Icon className="w-4 h-4 text-[#6B6560]" />
+        <span>{title}</span>
+      </h2>
+      <p className="text-xs font-mono text-[#6B6560] leading-relaxed">{message}</p>
+    </div>
+  );
 }
 
 export default function IncidentDetailPage() {
@@ -507,9 +453,11 @@ export default function IncidentDetailPage() {
   const [incident, setIncident] = useState<IncidentDetailDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showGraphVisualizer, setShowGraphVisualizer] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const fetchIncidentDetail = async (silent = false, signal?: AbortSignal) => {
+  const fetchIncidentDetail = useCallback(async (silent = false, signal?: AbortSignal) => {
     const activeToken = session?.token || '';
     if (!id) return;
     if (!silent) setLoading(true);
@@ -529,7 +477,7 @@ export default function IncidentDetailPage() {
     } finally {
       if (!signal?.aborted && !silent) setLoading(false);
     }
-  };
+  }, [id, session]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -544,7 +492,7 @@ export default function IncidentDetailPage() {
       controller.abort();
       clearInterval(interval);
     };
-  }, [id, session]);
+  }, [fetchIncidentDetail]);
 
   if (loading) {
     return (
@@ -577,63 +525,27 @@ export default function IncidentDetailPage() {
     );
   }
 
-  const rootCause: RootCauseDTO = incident.root_cause || {
-    cause: incident.title,
-    confidence: 0.85,
-    explanation: incident.description || incident.title,
-    evidence: [
-      {
-        id: 'ev-1',
-        source: 'Alert Ingestion Engine',
-        type: 'log_trace',
-        description: `Bug anomaly trace in RISE/apps/${incident.affected_service || 'auth-service'}/src/index.js (L42-L58)`
-      },
-      {
-        id: 'ev-2',
-        source: 'Prometheus Metric Bus',
-        type: 'metric_spike',
-        description: '503 error rate spiked > 45% above baseline threshold.'
-      }
-    ],
-    similar_incidents: []
-  };
-
-  const impact = incident.impact || {
-    blast_radius: [incident.affected_service || 'auth-service'],
-    severity: incident.severity,
-    estimated_users_affected: 300,
-    business_impact_notes: 'Potential service disruption affecting target service.'
-  };
-
-  const decision: DecisionDTO = incident.decision || {
-    risk_tier: (incident.severity === 'SEV1' || incident.severity === 'SEV2') ? 'medium' : 'low',
-    confidence: 0.85,
-    requires_approval: incident.status !== 'resolved',
-    recommended_action: {
-      id: `plan-${incident.id.slice(0, 8)}`,
-      description: `Investigation pending for ${incident.affected_service || 'service'} — no verified plan available yet`,
-      steps: ['Agent pipeline has not produced a verified action plan for this incident yet.'],
-      fix_unavailable_reason: 'No automated action plan has been generated by the agent pipeline for this incident. Manual investigation required.',
-    }
-  };
-
-  const verification = incident.verification;
-  const activeAction = incident.actions?.[0] || {
-    id: `act-${incident.id.slice(0, 8)}`,
-    incident_id: incident.id,
-    name: `Remediation pending — ${incident.affected_service || 'service'}`,
-    risk_tier: (incident.severity === 'SEV1' || incident.severity === 'SEV2') ? 'medium' : 'low',
-    status: incident.status === 'resolved' ? 'approved' : 'pending_approval',
-  };
+  // Honest bindings: use ONLY real backend data. When a pipeline stage has not
+  // produced its output the value is null, and the UI renders an explicit
+  // "not computed / no data" state (below) rather than a fabricated value.
+  const rootCause = incident.root_cause ?? null;
+  const impact = incident.impact ?? null;
+  const decision = incident.decision ?? null;
+  const verification = incident.verification ?? null;
+  const activeAction = incident.actions?.[0] ?? null;
 
   const handleDeleteIncident = async () => {
-    if (!confirm('Are you sure you want to delete/dismiss this incident from the system?')) return;
     const activeToken = session?.token || '';
+    setDeleting(true);
+    setDeleteError(null);
     try {
       await apiClient.deleteIncident(activeToken, id);
+      // On success the browser navigates away, so the modal state is discarded
+      // with the page — no fabricated "deleted" confirmation is shown here.
       window.location.href = '/incidents';
     } catch (err: any) {
-      alert(err.message || 'Failed to delete incident');
+      setDeleteError(err.message || 'Failed to delete incident');
+      setDeleting(false);
     }
   };
 
@@ -659,11 +571,11 @@ export default function IncidentDetailPage() {
             <div className="space-y-1.5">
               <div className="flex items-center gap-3 flex-wrap">
                 <span className={tx('incidentTitle', 'text-[#FAF7F2]')}>{incident.title}</span>
-                <span className="px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-[#EF4444]/15 text-[#EF4444] border border-[#EF4444]/30">
-                  {incident.severity}
+                <span className={`px-2.5 py-0.5 rounded text-xs font-mono font-bold border ${SEVERITY_META[incident.severity].badgeClass}`}>
+                  {SEVERITY_META[incident.severity].label}
                 </span>
-                <span className="px-2.5 py-0.5 rounded text-xs font-mono font-bold uppercase bg-[#8B5CF6]/15 text-[#8B5CF6] border border-[#8B5CF6]/30">
-                  {incident.status}
+                <span className={`px-2.5 py-0.5 rounded text-xs font-mono font-bold uppercase border ${TONE_BADGE_CLASSES[INCIDENT_STATUS_META[incident.status].tone]}`}>
+                  {INCIDENT_STATUS_META[incident.status].label}
                 </span>
               </div>
               <div className="flex items-center gap-4 text-xs text-[#6B6560] flex-wrap">
@@ -685,7 +597,7 @@ export default function IncidentDetailPage() {
               </button>
 
               <button
-                onClick={handleDeleteIncident}
+                onClick={() => { setDeleteError(null); setShowDeleteConfirm(true); }}
                 className="inline-flex items-center gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 px-4 py-2 text-xs font-semibold text-[#EF4444] hover:bg-[#EF4444]/20 transition-colors"
               >
                 <XCircle className="w-3.5 h-3.5" />
@@ -699,65 +611,7 @@ export default function IncidentDetailPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* LEFT COLUMN: Timeline & RCA & Action Plan */}
           <div className="lg:col-span-8 space-y-8">
-            {/* PS Agent Roles Mapping Legend (Demo Mode) */}
-            <div className="rounded-xl border border-[#8B5CF6]/30 bg-gradient-to-r from-[#8B5CF6]/10 via-[#151121] to-[#0E0B14] p-5 text-xs space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2.5">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-[#8B5CF6]/30 text-[#8B5CF6] border border-[#8B5CF6]/50 flex items-center gap-1">
-                    <Sparkles className="w-3 h-3" />
-                    <span>Demo Mode</span>
-                  </span>
-                  <span className="font-semibold text-[#FAF7F2] text-sm">Problem Statement (PS) Agent Role Mapping</span>
-                </div>
-                <button
-                  onClick={() => setShowGraphVisualizer(!showGraphVisualizer)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30 border border-[#8B5CF6]/30 font-mono text-[11px] transition-colors"
-                >
-                  <Activity className="w-3.5 h-3.5" />
-                  <span>{showGraphVisualizer ? 'Hide Pipeline Graph' : 'View Multi-Agent Graph'}</span>
-                  {showGraphVisualizer ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                <div className="rounded-lg bg-[#0E0B14]/80 p-3 border border-[#8B5CF6]/20 flex items-start gap-3">
-                  <div className="p-1.5 rounded bg-[#8B5CF6]/20 text-[#8B5CF6] mt-0.5 flex-shrink-0">
-                    <Search className="w-4 h-4" />
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-[#8B5CF6] font-mono">Log Analysis Agent</span>
-                      <span className="text-[#6B6560] font-mono text-[10px]">➔ Context Builder + Ingestion</span>
-                    </div>
-                    <p className="text-[#6B6560] text-[11px] leading-relaxed">
-                      Ingests, normalizes, and correlates security log events (Syslog, CSV, JSON, NDJSON) with live metrics & vector memory.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="rounded-lg bg-[#0E0B14]/80 p-3 border border-[#F5A623]/20 flex items-start gap-3">
-                  <div className="p-1.5 rounded bg-[#F5A623]/20 text-[#F5A623] mt-0.5 flex-shrink-0">
-                    <Activity className="w-4 h-4" />
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-[#F5A623] font-mono">Threat Investigation Agent</span>
-                      <span className="text-[#6B6560] font-mono text-[10px]">➔ Investigation + Root Cause</span>
-                    </div>
-                    <p className="text-[#6B6560] text-[11px] leading-relaxed">
-                      Generates ranked hypotheses, determines root cause with calibrated confidence scoring, and cites verifiable evidence.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Optional Collapsible Agent Flow Diagram */}
-            {showGraphVisualizer && (
-              <div className="transition-all duration-300">
-                <AgentFlowDiagram />
-              </div>
-            )}
+            {/* Timeline & analytical sections below render ONLY real incident data. */}
 
             {/* 1. Timeline Stepper */}
             {incident.timeline && incident.timeline.length > 0 && (
@@ -767,47 +621,34 @@ export default function IncidentDetailPage() {
                     <Clock className="w-4 h-4 text-[#8B5CF6]" />
                     <span>Agent Investigation Timeline</span>
                   </h2>
-                  <span className="text-xs font-mono text-[#6B6560]">
-                    PS Named Roles Attached Per Step
-                  </span>
                 </div>
 
                 <div className="relative pl-6 space-y-6 border-l-2 border-[#8B5CF6]/30">
-                  {incident.timeline.map((step, idx) => {
-                    const psInfo = getPsAgentRole(step.event, step.text);
-                    return (
-                      <div key={idx} className="relative group">
-                        <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full border-2 border-[#8B5CF6] bg-[#0E0B14] group-hover:bg-[#8B5CF6] transition-colors" />
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-4 flex-wrap">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className={tx('cardTitle', 'text-[#FAF7F2] text-sm')}>{step.event}</span>
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase border ${psInfo.badgeStyle}`}>
-                                PS: {psInfo.role}
-                              </span>
-                            </div>
-                            <span className="text-[11px] font-mono text-[#6B6560] tabular-nums">
-                              {new Date(step.timestamp).toLocaleTimeString()}
-                            </span>
-                          </div>
-                          <div className="text-[11px] font-mono flex items-center gap-2 text-[#6B6560] flex-wrap">
-                            <span className="text-[#8B5CF6]/90 font-medium">[{psInfo.sourceAgent}]</span>
-                            <span>•</span>
-                            <span className="text-[#6B6560] italic">{psInfo.description}</span>
-                          </div>
-                          {step.text && (
-                            <p className={tx('cardSummary', 'text-[#6B6560]')}>{step.text}</p>
-                          )}
+                  {incident.timeline.map((step, idx) => (
+                    <div key={idx} className="relative group">
+                      <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full border-2 border-[#8B5CF6] bg-[#0E0B14] group-hover:bg-[#8B5CF6] transition-colors" />
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                          <span className={tx('cardTitle', 'text-[#FAF7F2] text-sm')}>{step.event}</span>
+                          <span className="text-[11px] font-mono text-[#6B6560] tabular-nums">
+                            {new Date(step.timestamp).toLocaleTimeString()}
+                          </span>
                         </div>
+                        {step.author && (
+                          <div className="text-[11px] font-mono text-[#8B5CF6]/90 font-medium">{step.author}</div>
+                        )}
+                        {step.text && (
+                          <p className={tx('cardSummary', 'text-[#6B6560]')}>{step.text}</p>
+                        )}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
 
             {/* 2. RCA Section */}
-            {rootCause && (
+            {rootCause ? (
               <div className="rounded-xl border border-[#E8E2D9]/15 bg-[#151121] p-6 space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#E8E2D9]/10 pb-4">
                   <div className="space-y-0.5">
@@ -816,16 +657,13 @@ export default function IncidentDetailPage() {
                       <span>Root Cause Analysis &amp; Evidence</span>
                     </h2>
                     <p className="text-[11px] font-mono text-[#6B6560]">
-                      Evidence-backed diagnosis calibrated by the Threat Investigation Agent
+                      Evidence-backed diagnosis produced by the root-cause analysis stage
                     </p>
                   </div>
-                  <span className="px-2.5 py-1 rounded text-xs font-mono font-semibold bg-[#F5A623]/15 text-[#F5A623] border border-[#F5A623]/30 self-start sm:self-auto">
-                    PS Role: Threat Investigation Agent
-                  </span>
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
-                  <ConfidenceArc score={rootCause.confidence || 0.85} />
+                  <ConfidenceArc resolved={resolveConfidence(rootCause.confidence)} />
                   <div className="space-y-2 flex-1">
                     <h3 className={tx('cardTitle', 'text-[#FAF7F2]')}>{rootCause.cause}</h3>
                     {rootCause.explanation && (
@@ -848,24 +686,12 @@ export default function IncidentDetailPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#E8E2D9]/10 text-[#E8E2D9]">
-                          {rootCause.evidence.map((ev: any, i: number) => (
+                          {rootCause.evidence.map((ev, i) => (
                             <tr key={i} className="hover:bg-[#E8E2D9]/5">
                               <td className="p-3 font-semibold text-[#8B5CF6]">{ev.source}</td>
                               <td className="p-3 uppercase text-[#6B6560]">{ev.type}</td>
-                              <td className="p-3 space-y-1">
+                              <td className="p-3">
                                 <div>{ev.description}</div>
-                                {ev.file_path && (
-                                  <div className="text-[11px] text-[#8B5CF6]">
-                                    <span className="text-[#6B6560]">File: </span>
-                                    <code>{ev.file_path}</code>
-                                    {ev.line_start && (
-                                      <span> (L{ev.line_start}{ev.line_end ? `-L${ev.line_end}` : ''})</span>
-                                    )}
-                                    {ev.commit_sha && (
-                                      <span className="text-[#6B6560] ml-2">@ {ev.commit_sha.slice(0, 7)}</span>
-                                    )}
-                                  </div>
-                                )}
                               </td>
                             </tr>
                           ))}
@@ -890,6 +716,12 @@ export default function IncidentDetailPage() {
                   </div>
                 )}
               </div>
+            ) : (
+              <SectionUnavailable
+                icon={Cpu}
+                title="Root Cause Analysis & Evidence"
+                message="Not computed — the agent pipeline has not produced a root-cause diagnosis for this incident yet."
+              />
             )}
 
             {/* 2b. GitHub Source Evidence Panel — only for monitor-detected incidents */}
@@ -904,7 +736,7 @@ export default function IncidentDetailPage() {
             )}
 
             {/* 3. Action Plan & Approval Controls */}
-            {decision && (() => {
+            {decision ? (() => {
               const isSimulatedAction =
                 Boolean(decision.is_simulated) ||
                 Boolean(decision.recommended_action?.is_simulated) ||
@@ -1028,14 +860,20 @@ export default function IncidentDetailPage() {
                   </div>
                 )}
               </div>
-            )})()}
+            )})() : (
+              <SectionUnavailable
+                icon={Layers}
+                title="Recommended Action Plan"
+                message="No action plan — the agent pipeline has not produced a remediation decision for this incident yet."
+              />
+            )}
 
           </div>
 
           {/* RIGHT COLUMN: Impact & Verification */}
           <div className="lg:col-span-4 space-y-8">
             {/* Impact Assessment */}
-            {impact && (
+            {impact ? (
               <div className="rounded-xl border border-[#E8E2D9]/15 bg-[#151121] p-6 space-y-6">
                 {/* Section header */}
                 <h2 className={tx('sectionHeader', 'text-[#FAF7F2] flex items-center gap-2')}>
@@ -1056,7 +894,9 @@ export default function IncidentDetailPage() {
                     </p>
                     <div className="flex items-center gap-2 pt-1 flex-wrap">
                       <span className="text-[10px] font-mono text-[#6B6560] uppercase">Severity:</span>
-                      <span className="text-sm font-bold text-[#EF4444]">{impact.severity}</span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold border ${SEVERITY_META[impact.severity].badgeClass}`}>
+                        {SEVERITY_META[impact.severity].label}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1065,11 +905,15 @@ export default function IncidentDetailPage() {
                   <div>
                     <span className="text-[#6B6560] uppercase block mb-1.5">Blast Radius Services</span>
                     <div className="flex flex-wrap gap-1.5">
-                      {impact.blast_radius.map((svc, i) => (
-                        <span key={i} className="rounded-md border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 px-2.5 py-1 text-[#8B5CF6]">
-                          {svc}
-                        </span>
-                      ))}
+                      {impact.blast_radius && impact.blast_radius.length > 0 ? (
+                        impact.blast_radius.map((svc, i) => (
+                          <span key={i} className="rounded-md border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 px-2.5 py-1 text-[#8B5CF6]">
+                            {svc}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[#6B6560]">—</span>
+                      )}
                     </div>
                   </div>
 
@@ -1077,17 +921,25 @@ export default function IncidentDetailPage() {
                     <div>
                       <span className="text-[#6B6560] uppercase block mb-1">Users Affected</span>
                       <span className={tx('confidenceScore', 'text-[#FAF7F2]')}>
-                        {impact.estimated_users_affected.toLocaleString()}
+                        {typeof impact.estimated_users_affected === 'number'
+                          ? impact.estimated_users_affected.toLocaleString()
+                          : '—'}
                       </span>
                     </div>
                   </div>
 
                   <div>
                     <span className="text-[#6B6560] uppercase block mb-1">Business Impact</span>
-                    <p className="text-[#E8E2D9] leading-relaxed font-sans">{impact.business_impact_notes}</p>
+                    <p className="text-[#E8E2D9] leading-relaxed font-sans">{impact.business_impact_notes || '—'}</p>
                   </div>
                 </div>
               </div>
+            ) : (
+              <SectionUnavailable
+                icon={Activity}
+                title="Impact & Blast Radius"
+                message="Not computed — blast radius and user impact have not been assessed for this incident yet."
+              />
             )}
 
             {/* Verification Section */}
@@ -1131,6 +983,66 @@ export default function IncidentDetailPage() {
           </div>
         </div>
       </main>
+
+      {/* ── Delete Confirmation Modal ──────────────────────────────────────
+          Replaces the native confirm()/alert() dialogs. No fabricated
+          "deleted" confirmation is shown: on success the browser navigates
+          to /incidents; on failure the real backend error is surfaced. */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-xl border border-[#EF4444]/30 bg-[#151121] p-6 shadow-2xl space-y-6">
+            <div className="flex items-center justify-between border-b border-[#E8E2D9]/10 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#EF4444]/40 bg-[#EF4444]/10">
+                  <AlertTriangle className="h-5 w-5 text-[#EF4444]" />
+                </div>
+                <h3 className="text-sm font-semibold text-[#FAF7F2]">Delete this incident?</h3>
+              </div>
+              <button
+                onClick={() => { setDeleteError(null); setShowDeleteConfirm(false); }}
+                className="text-[#6B6560] hover:text-[#FAF7F2] transition-colors"
+                disabled={deleting}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-[#E8E2D9] leading-relaxed">
+              This permanently removes the incident and its investigation record
+              from the system. This action cannot be undone.
+            </p>
+
+            {deleteError && (
+              <div className="flex items-start gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3 text-xs font-mono text-[#EF4444]">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]/10">
+              <button
+                type="button"
+                onClick={() => { setDeleteError(null); setShowDeleteConfirm(false); }}
+                disabled={deleting}
+                className="rounded-lg border border-[#E8E2D9]/15 px-4 py-2 text-xs font-semibold text-[#E8E2D9] hover:bg-[#E8E2D9]/5 disabled:opacity-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteIncident}
+                disabled={deleting}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#EF4444] px-5 py-2 text-xs font-semibold text-[#FAF7F2] hover:bg-[#EF4444]/90 disabled:opacity-50 transition-colors"
+              >
+                {deleting ? (
+                  <><RefreshCw className="h-3.5 w-3.5 animate-spin" /><span>Deleting…</span></>
+                ) : (
+                  <><XCircle className="h-3.5 w-3.5" /><span>Confirm Delete</span></>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

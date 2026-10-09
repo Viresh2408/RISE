@@ -1,0 +1,17 @@
+# Staging deployment tuning. Probes are inherited unchanged from base
+# (/healthz, /readyz); this patch only sets replica count and env.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rise-api
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: rise-api
+          env:
+            - name: ENVIRONMENT
+              value: "staging"
+            - name: LOG_LEVEL
+              value: "DEBUG"

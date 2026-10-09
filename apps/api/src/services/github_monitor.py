@@ -35,6 +35,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import partial
 from typing import Callable, List, Optional
 
 from sqlalchemy import select
@@ -560,10 +561,11 @@ async def _run_monitor_cycle(patterns: List[FilePattern]) -> None:
             pattern_ref  = pattern.ref  or ref
             file_result = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda p=pattern, pr=pattern_repo, pref=pattern_ref: fetch_github_file_content(
-                    p.file_path,
-                    repo=pr,
-                    ref=pref,
+                partial(
+                    fetch_github_file_content,
+                    pattern.file_path,
+                    repo=pattern_repo,
+                    ref=pattern_ref,
                     github_token=github_token,
                     timeout_s=10.0,
                 ),

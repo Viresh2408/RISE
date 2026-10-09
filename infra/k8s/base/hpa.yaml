@@ -1,0 +1,24 @@
+# CPU-based autoscaler for rise-api.  Base bounds are conservative; overlays
+# widen them (staging 2-4, prod 3-10) via a patch. NOTE: because this HPA owns
+# .spec.replicas at runtime, the replicas value in deployment.yaml is only the
+# initial count before the HPA takes over.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rise-api
+  labels:
+    app: rise-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rise-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75

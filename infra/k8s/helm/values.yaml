@@ -1,0 +1,60 @@
+# Base (dev-safe) defaults. Environment overlays (values-prod.yaml, etc.) and CI
+# --set flags override image.tag, serviceAccount.roleArn, and toggles below.
+environment: dev
+logLevel: INFO
+replicaCount: 2
+
+image:
+  repository: ghcr.io/rise/rise-api
+  tag: latest
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: rise-api
+  # IRSA role ARN (eks.amazonaws.com/role-arn). Empty = no annotation.
+  roleArn: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+containerPort: 8000
+
+probes:
+  liveness:
+    path: /healthz
+  readiness:
+    path: /readyz
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+
+canary:
+  enabled: false
+  weight: 10
+  soakPeriodMinutes: 30
+  autoPromote: true
+  host: api.rise.internal
+  ingressClassName: nginx
+
+secrets:
+  externalSecretsOperator:
+    enabled: false
+    secretStore: aws-secrets-manager
+    refreshInterval: 1h
+
+monitoring:
+  enabled: false
+  prometheusServiceMonitor: false

@@ -7,8 +7,16 @@ resources:
   - ../../base
   - canary-ingress.yaml
 
-patchesStrategicMerge:
-  - deployment.yaml
+# Prod image (registry/tag set by CI); overrides the base rise-api:latest.
+images:
+  - name: rise-api
+    newName: ghcr.io/rise/rise-api
+    newTag: prod
+
+patches:
+  - path: deployment.yaml
+  - path: hpa-patch.yaml
+  - path: serviceaccount-irsa.yaml
 
 commonLabels:
   environment: production

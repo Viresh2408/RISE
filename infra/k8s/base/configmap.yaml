@@ -1,0 +1,14 @@
+# Non-secret runtime config for rise-api.  Real credentials (DATABASE_URL,
+# REDIS_URL, QDRANT_URL, JWT keys, GitHub/LLM tokens) are NOT here — in
+# staging/prod they are projected from AWS Secrets Manager via the External
+# Secrets Operator (see infra/k8s/external-secrets/). ENVIRONMENT is overridden
+# per overlay.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rise-api-config
+  labels:
+    app: rise-api
+data:
+  ENVIRONMENT: "base"
+  LOG_LEVEL: "INFO"

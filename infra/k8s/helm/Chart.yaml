@@ -1,0 +1,7 @@
+apiVersion: v2
+name: rise-api
+description: RISE incident-remediation API (FastAPI) — Helm packaging. Mirrors the
+  Kustomize base in infra/k8s/base; use values-<env>.yaml overlays for per-env config.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rise-api
+  labels:
+    {{- include "rise-api.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "rise-api.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+{{- if .Values.canary.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rise-api-canary
+  labels:
+    {{- include "rise-api.labels" . | nindent 4 }}
+    track: canary
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "rise-api.selectorLabels" . | nindent 4 }}
+    track: canary
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+{{- end }}

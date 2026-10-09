@@ -3,6 +3,16 @@ output "cluster_id" {
   value       = aws_eks_cluster.main.id
 }
 
+output "cluster_name" {
+  description = "The EKS cluster name"
+  value       = aws_eks_cluster.main.name
+}
+
+output "cluster_arn" {
+  description = "The EKS cluster ARN"
+  value       = aws_eks_cluster.main.arn
+}
+
 output "cluster_endpoint" {
   description = "Endpoint for EKS control plane"
   value       = aws_eks_cluster.main.endpoint

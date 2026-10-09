@@ -183,11 +183,11 @@ async def run_ingestion_agent(
         logger.warning(
             "Ingestion Agent schema validation failed after repair: source=%s provider=%s",
             source,
-            exc.provider,
+            exc.provider_name,
         )
         raise IngestionAgentError(
             reason="llm_schema_validation_failed",
-            detail=f"IncidentEvent validation failed after repair (provider={exc.provider}): {exc}",
+            detail=f"IncidentEvent validation failed after repair (provider={exc.provider_name}): {exc}",
         ) from exc
 
     except AllProvidersFailedError as exc:

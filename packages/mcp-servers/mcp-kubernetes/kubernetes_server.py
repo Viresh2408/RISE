@@ -45,7 +45,7 @@ class MCPKubernetesServer:
 
     def _init_k8s_client(self) -> None:
         try:
-            from kubernetes import client, config
+            from kubernetes import config
             if self.in_cluster:
                 config.load_incluster_config()
                 self._k8s_client_available = True

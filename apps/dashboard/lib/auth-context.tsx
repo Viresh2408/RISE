@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { supabase } from './supabase';
 import { apiClient } from './api-client';
 
@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSessionState] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const saveSession = (sess: UserSession | null) => {
+  const saveSession = useCallback((sess: UserSession | null) => {
     setSessionState(sess);
     if (typeof window !== 'undefined') {
       if (sess) {
@@ -44,9 +44,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem(STORAGE_KEY);
       }
     }
-  };
+  }, []);
 
-  const fetchBackendSession = async (jwtToken: string, userEmail: string) => {
+  const fetchBackendSession = useCallback(async (jwtToken: string, userEmail: string) => {
     try {
       const backendSession = await apiClient.getSession(jwtToken);
       const newSession: UserSession = {
@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       saveSession(null);
       throw err;
     }
-  };
+  }, [saveSession]);
 
   useEffect(() => {
     // 1. Immediately hydrate active session from localStorage on page reload
@@ -119,7 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [fetchBackendSession]);
 
   const login = async (email: string, pass: string) => {
     setLoading(true);

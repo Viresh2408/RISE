@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Navbar } from '../../components/navbar';
 import { AdminGate } from '../../components/shared/AdminGate';
 import { CardSkeleton } from '../../components/shared/CardSkeleton';
@@ -63,27 +63,6 @@ function getIntegrationIcon(type: string) {
   }
 }
 
-// Demo credential hints per integration type
-const DEMO_CREDENTIALS: Record<string, { label: string; placeholder: string; hint: string }[]> = {
-  github: [
-    { label: 'GitHub PAT (Personal Access Token)', placeholder: 'ghp_xxxxxxxxxxxxxxxxxxxx', hint: 'Settings → Developer settings → Personal access tokens → Fine-grained tokens' },
-    { label: 'Repository (owner/repo)', placeholder: 'your-org/your-repo', hint: 'The repository RISE will open PRs against' },
-  ],
-  slack: [
-    { label: 'Bot Token', placeholder: 'xoxb-xxxxxxxxxxxx', hint: 'Slack App → OAuth & Permissions → Bot Token Scopes' },
-    { label: 'Channel ID', placeholder: 'C0XXXXXXX', hint: 'Right-click channel → View channel details → Channel ID' },
-  ],
-  cloudwatch: [
-    { label: 'AWS Access Key ID', placeholder: 'AKIAIOSFODNN7EXAMPLE', hint: 'IAM → Users → Security credentials' },
-    { label: 'AWS Secret Access Key', placeholder: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', hint: 'Shown once at key creation' },
-    { label: 'AWS Region', placeholder: 'us-east-1', hint: 'Region where your CloudWatch alarms are configured' },
-  ],
-  alertmanager: [
-    { label: 'Alertmanager Endpoint', placeholder: 'https://alertmanager.internal:9093', hint: 'Your Prometheus Alertmanager base URL' },
-    { label: 'Webhook Secret', placeholder: 'your-secret', hint: 'Secret used to validate incoming webhook payloads from Alertmanager' },
-  ],
-};
-
 function IntegrationsContent() {
   const { session } = useAuth();
   const [integrations, setIntegrations] = useState<IntegrationDTO[]>([]);
@@ -93,19 +72,20 @@ function IntegrationsContent() {
 
   // Connect modal state
   const [connectTarget, setConnectTarget] = useState<{ type: string; name: string } | null>(null);
-  const [credValues, setCredValues] = useState<Record<string, string>>({});
   const [connectingType, setConnectingType] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   // Disconnect modal state
   const [disconnectTarget, setDisconnectTarget] = useState<{ type: string; name: string } | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
 
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(null), 5000);
   };
 
-  const fetchIntegrations = async () => {
+  const fetchIntegrations = useCallback(async () => {
     if (!session?.token) return;
     setLoading(true);
     try {
@@ -117,27 +97,38 @@ function IntegrationsContent() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [session]);
 
   useEffect(() => {
     fetchIntegrations();
-  }, [session]);
+  }, [fetchIntegrations]);
 
   const openConnectModal = (type: string, name: string) => {
-    setCredValues({});
+    setConnectError(null);
     setConnectTarget({ type, name });
   };
 
   const handleConfirmConnect = async () => {
     if (!session?.token || !connectTarget) return;
     setConnectingType(connectTarget.type);
+    setConnectError(null);
     try {
-      const res = await apiClient.connectIntegration(session.token, connectTarget.type) as any;
-      setConnectTarget(null);
-      await fetchIntegrations();
-      showSuccess(res?.message || `${connectTarget.name} connected successfully.`);
+      const res = await apiClient.connectIntegration(session.token, connectTarget.type);
+      // The connect endpoint returns a provider authorization URL (OAuth-style
+      // handoff). Hand the browser off to complete the grant. The integration
+      // is NOT connected until the operator finishes authorization and returns,
+      // so we must not report success here.
+      if (res?.redirect_url) {
+        window.location.href = res.redirect_url;
+        return;
+      }
+      // No authorization URL was returned — surface that honestly instead of
+      // reporting a fabricated "connected successfully".
+      setConnectError(
+        'The backend did not return an authorization URL for this integration, so the connection could not be started.'
+      );
     } catch (err: any) {
-      alert(`Connect failed: ${err.message}`);
+      setConnectError(err.message || 'Failed to start connection');
     } finally {
       setConnectingType(null);
     }
@@ -146,13 +137,14 @@ function IntegrationsContent() {
   const handleConfirmDisconnect = async () => {
     if (!session?.token || !disconnectTarget) return;
     setDisconnecting(true);
+    setDisconnectError(null);
     try {
       await apiClient.disconnectIntegration(session.token, disconnectTarget.type);
       setDisconnectTarget(null);
       await fetchIntegrations();
       showSuccess(`${disconnectTarget.name} disconnected.`);
     } catch (err: any) {
-      alert(`Disconnect failed: ${err.message}`);
+      setDisconnectError(err.message || 'Failed to disconnect');
     } finally {
       setDisconnecting(false);
     }
@@ -192,9 +184,9 @@ function IntegrationsContent() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-3 rounded-xl border border-[#F5A623]/30 bg-[#F5A623]/10 p-4 text-[#F5A623] text-xs font-mono">
+        <div className="flex items-center gap-3 rounded-xl border border-[#EF4444]/30 bg-[#EF4444]/10 p-4 text-[#EF4444] text-xs font-mono">
           <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-          <span>API error — {error}</span>
+          <span>Failed to load integrations — {error}</span>
         </div>
       )}
 
@@ -255,7 +247,7 @@ function IntegrationsContent() {
                 <div className="pt-4 border-t border-[#E8E2D9]/10 flex items-center justify-end gap-3">
                   {isConnected ? (
                     <button
-                      onClick={() => setDisconnectTarget({ type: cat.type, name: cat.name })}
+                      onClick={() => { setDisconnectError(null); setDisconnectTarget({ type: cat.type, name: cat.name }); }}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-[#EF4444]/40 bg-[#EF4444]/10 px-4 py-2 text-xs font-semibold text-[#EF4444] hover:bg-[#EF4444]/20 transition-colors"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -292,34 +284,41 @@ function IntegrationsContent() {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-[#FAF7F2]">Connect {connectTarget.name}</h3>
-                  <p className="text-[10px] text-[#6B6560] font-mono mt-0.5">Demo environment — credentials are saved locally</p>
+                  <p className="text-[10px] text-[#6B6560] font-mono mt-0.5">Backend-initiated authorization flow</p>
                 </div>
               </div>
-              <button onClick={() => setConnectTarget(null)} className="text-[#6B6560] hover:text-[#FAF7F2] transition-colors">
+              <button onClick={() => { setConnectError(null); setConnectTarget(null); }} className="text-[#6B6560] hover:text-[#FAF7F2] transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <div className="space-y-4">
-              {(DEMO_CREDENTIALS[connectTarget.type] || []).map((field) => (
-                <div key={field.label} className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-[#E8E2D9]">{field.label}</label>
-                  <input
-                    type={field.label.toLowerCase().includes('secret') || field.label.toLowerCase().includes('key') || field.label.toLowerCase().includes('token') ? 'password' : 'text'}
-                    placeholder={field.placeholder}
-                    value={credValues[field.label] || ''}
-                    onChange={(e) => setCredValues((v) => ({ ...v, [field.label]: e.target.value }))}
-                    className="w-full rounded-lg border border-[#E8E2D9]/15 bg-[#0E0B14] px-3 py-2.5 text-xs font-mono text-[#FAF7F2] placeholder-[#6B6560]/60 focus:border-[#8B5CF6] focus:outline-none focus:ring-1 focus:ring-[#8B5CF6]/30 transition-all"
-                  />
-                  <p className="text-[10px] text-[#6B6560] font-mono">{field.hint}</p>
+              <p className={tx('cardSummary', 'text-[#E8E2D9]')}>
+                Connecting starts an authorization flow handled by the RISE backend.
+                You will be redirected to {connectTarget.name} to grant access — RISE
+                does not collect or store provider credentials on this screen.
+              </p>
+              <div className="flex items-start gap-2 rounded-lg border border-[#8B5CF6]/20 bg-[#8B5CF6]/5 p-3">
+                <ExternalLink className="h-4 w-4 text-[#8B5CF6] flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] text-[#6B6560] font-mono leading-relaxed">
+                  On continue, the backend returns a provider authorization URL and
+                  your browser is handed off to complete the grant. The integration is
+                  not marked connected until you finish authorization and return.
+                </p>
+              </div>
+
+              {connectError && (
+                <div className="flex items-start gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3 text-xs font-mono text-[#EF4444]">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{connectError}</span>
                 </div>
-              ))}
+              )}
             </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]/10">
               <button
                 type="button"
-                onClick={() => setConnectTarget(null)}
+                onClick={() => { setConnectError(null); setConnectTarget(null); }}
                 className="rounded-lg border border-[#E8E2D9]/15 px-4 py-2 text-xs font-semibold text-[#E8E2D9] hover:bg-[#E8E2D9]/5 transition-colors"
               >
                 Cancel
@@ -330,9 +329,9 @@ function IntegrationsContent() {
                 className="rounded-lg bg-[#8B5CF6] px-5 py-2 text-xs font-semibold text-[#FAF7F2] hover:bg-[#7C3AED] disabled:opacity-50 transition-colors inline-flex items-center gap-2"
               >
                 {connectingType ? (
-                  <><RefreshCw className="h-3.5 w-3.5 animate-spin" /><span>Connecting...</span></>
+                  <><RefreshCw className="h-3.5 w-3.5 animate-spin" /><span>Starting...</span></>
                 ) : (
-                  <span>Save &amp; Connect</span>
+                  <span>Continue</span>
                 )}
               </button>
             </div>
@@ -346,7 +345,7 @@ function IntegrationsContent() {
           <div className="w-full max-w-md rounded-xl border border-[#E8E2D9]/20 bg-[#151121] p-6 shadow-2xl space-y-6">
             <div className="flex items-center justify-between border-b border-[#E8E2D9]/10 pb-4">
               <h3 className="text-sm font-semibold text-[#FAF7F2]">Disconnect {disconnectTarget.name}?</h3>
-              <button onClick={() => setDisconnectTarget(null)} className="text-[#6B6560] hover:text-[#FAF7F2] transition-colors">
+              <button onClick={() => { setDisconnectError(null); setDisconnectTarget(null); }} className="text-[#6B6560] hover:text-[#FAF7F2] transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -355,10 +354,17 @@ function IntegrationsContent() {
               This will revoke RISE&apos;s API access to {disconnectTarget.name}. Active incident investigations using this connector will lose live context.
             </p>
 
+            {disconnectError && (
+              <div className="flex items-start gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3 text-xs font-mono text-[#EF4444]">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{disconnectError}</span>
+              </div>
+            )}
+
             <div className="flex justify-end gap-3 pt-4 border-t border-[#E8E2D9]/10">
               <button
                 type="button"
-                onClick={() => setDisconnectTarget(null)}
+                onClick={() => { setDisconnectError(null); setDisconnectTarget(null); }}
                 className="rounded-lg border border-[#E8E2D9]/15 px-4 py-2 text-xs font-semibold text-[#E8E2D9] hover:bg-[#E8E2D9]/5 transition-colors"
               >
                 Cancel

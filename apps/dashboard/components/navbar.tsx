@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { tx } from '../lib/typography';
 
-const NAV_LINKS = [
+export const NAV_LINKS = [
   { href: '/', label: 'Platform', icon: null, exact: true },
   { href: '/incidents', label: 'Incidents', icon: LayoutDashboard, exact: false },
   { href: '/reports', label: 'Reports', icon: BarChart2, exact: false },
@@ -29,12 +29,19 @@ const NAV_LINKS = [
   { href: '/integrations', label: 'Integrations', icon: Plug, exact: false },
 ];
 
-export function Navbar({ realtimeConnected = true }: { realtimeConnected?: boolean }) {
+export function Navbar({ realtimeConnected }: { realtimeConnected?: boolean }) {
   const { session, logout } = useAuth();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const primaryRole = session?.roles?.[0] || 'viewer';
+
+  // The live-status pill reflects a real connection signal only on screens that
+  // actually track one (the incidents console passes it from a Supabase
+  // subscription). When the prop is omitted the status is genuinely unknown
+  // here, so we render a neutral "unavailable" state rather than defaulting to
+  // a green "connected" claim the page never measured.
+  const statusKnown = typeof realtimeConnected === 'boolean';
 
   const isActive = (href: string, exact: boolean) =>
     exact ? pathname === href : pathname.startsWith(href);
@@ -83,11 +90,15 @@ export function Navbar({ realtimeConnected = true }: { realtimeConnected?: boole
           <div className="hidden xl:flex items-center space-x-2 bg-[#151121] border border-[#E8E2D9]/10 px-3 py-1.5 rounded-full">
             <span
               className={`h-2 w-2 rounded-full ${
-                realtimeConnected ? 'bg-[#22C55E] animate-pulse' : 'bg-[#F5A623]'
+                !statusKnown
+                  ? 'bg-[#6B6560]'
+                  : realtimeConnected
+                  ? 'bg-[#22C55E] animate-pulse'
+                  : 'bg-[#F5A623]'
               }`}
             />
             <span className={tx('cardMeta', 'text-[#E8E2D9] uppercase font-mono')}>
-              {realtimeConnected ? 'Nominal Stream' : '3s Polling'}
+              {!statusKnown ? 'Live status —' : realtimeConnected ? 'Nominal Stream' : 'Polling'}
             </span>
           </div>
 

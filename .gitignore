@@ -75,3 +75,5 @@ Thumbs.db
 *.swp
 *.swo
 
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

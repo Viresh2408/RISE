@@ -36,3 +36,24 @@ def _patch_metadata_for_sqlite(metadata):
                 col.server_default = None
 
 _patch_metadata_for_sqlite(Base.metadata)
+
+
+import pytest
+from unittest.mock import AsyncMock
+
+
+@pytest.fixture
+def offline_agent_io(monkeypatch):
+    """Routing tests exercise real nodes without live LLMs, telemetry or embeddings.
+
+    This fixture is opt-in: agent, gateway and integration-contract tests retain
+    their own injected boundaries. It is not an RCA accuracy or live load result.
+    """
+    from apps.agents.src.nodes import context_builder, investigation, root_cause, impact_analyzer, verification
+
+    for name in ("fetch_loki_logs", "fetch_prometheus_metrics", "fetch_github_deploys"):
+        monkeypatch.setattr(context_builder, name, lambda *args, **kwargs: ("[]", False))
+    monkeypatch.setattr(context_builder, "fetch_similar_incidents", lambda *args, **kwargs: ([], False))
+    monkeypatch.setattr(investigation, "fetch_runbook_snippets", lambda *args, **kwargs: ("No matching runbooks.", False))
+    for node in (context_builder, investigation, root_cause, impact_analyzer, verification):
+        monkeypatch.setattr(node, "call_structured", AsyncMock(side_effect=RuntimeError("offline routing fixture")))

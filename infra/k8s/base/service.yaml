@@ -1,0 +1,39 @@
+# Two ClusterIP Services on port 8000:
+#   rise-api        — stable service, selects all rise-api pods.
+#   rise-api-canary — selects only pods labelled track=canary; it is the
+#                     backend of overlays/prod/canary-ingress.yaml. The base
+#                     Deployment ships track=stable pods only, so this Service
+#                     has NO endpoints until a canary workload (track=canary) is
+#                     rolled out by the progressive-delivery pipeline. A canary
+#                     Deployment is intentionally out of scope for this base.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rise-api
+  labels:
+    app: rise-api
+spec:
+  type: ClusterIP
+  selector:
+    app: rise-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rise-api-canary
+  labels:
+    app: rise-api
+    track: canary
+spec:
+  type: ClusterIP
+  selector:
+    app: rise-api
+    track: canary
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

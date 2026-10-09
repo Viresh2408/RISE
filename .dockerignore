@@ -1,0 +1,49 @@
+# --- VCS / tooling ---
+.git
+.gitignore
+.github
+.kilo
+.claude
+.mcp.json
+*.md
+!README.md
+
+# --- Python caches / local DB / venvs ---
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.venv
+venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.db
+rise_dev.db
+
+# --- Node / frontend build artifacts (image installs its own) ---
+**/node_modules
+apps/dashboard/.next
+apps/dashboard/out
+.pnpm-store
+
+# --- Editor / OS cruft ---
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+
+# --- Secrets & env (never bake into an image) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.playwright-cli
+
+# --- Test / eval scratch not needed at runtime ---
+eval/reports
+htmlcov
+.coverage
+dist
+build

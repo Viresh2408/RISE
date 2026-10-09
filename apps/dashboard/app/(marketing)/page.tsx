@@ -26,7 +26,6 @@ import {
   Zap,
 } from 'lucide-react';
 import { tx } from '../../lib/typography';
-import { marketingMetrics } from '../../lib/benchmarks';
 
 // Dynamic import for Three.js Hero Canvas with SSR disabled
 const MarketingThreeHero = dynamic(
@@ -66,7 +65,7 @@ function MarketingNav() {
             Architecture
           </a>
           <a href="#metrics" className="hover:text-[#FAF7F2] transition-colors">
-            Metrics
+            Safety
           </a>
           <a href="#stack" className="hover:text-[#FAF7F2] transition-colors">
             Tech Stack
@@ -295,43 +294,64 @@ export default function MarketingLandingPage() {
         </section>
 
         {/* ══════════════════════════════════════════════════════
-            SECTION E — METRICS (Light: cream background)
+            SECTION E — SAFETY GUARANTEES (Light: cream background)
         ══════════════════════════════════════════════════════ */}
         <section id="metrics" className="py-20 md:py-28 bg-[#FAF7F2] text-[#0E0B14] px-4 md:px-16 border-t border-[#E8E2D9]">
           <div className="max-w-7xl mx-auto space-y-12">
             <div className="space-y-4 max-w-xl">
               <span className={tx('badge', 'text-[#4C2A85] bg-[#4C2A85]/10 px-3 py-1 rounded-full border border-[#4C2A85]/20')}>
-                Measured Performance
+                Safety by Construction
               </span>
               <h2 className={tx('sectionHeadline', 'text-[#0E0B14]')}>
-                Proven Impact
+                Never More Confident Than the Evidence
               </h2>
               <p className={tx('sectionSubhead', 'text-[#5A5550]')}>
-                Empirically benchmarked performance across production incident response environments.
+                RISE is engineered so the system is never more confident than the evidence supports — grounded diagnosis, policy-gated action, and independent verification on every incident.
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {marketingMetrics.map((item, idx) => (
-                <motion.div
-                  key={idx}
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ duration: 0.4, delay: idx * 0.1 }}
-                  className="rounded-xl border border-[#E8E2D9] bg-white p-6 sm:p-8 space-y-3 text-center shadow-sm hover:shadow-lg hover:border-[#8B5CF6]/40 transition-all duration-300 overflow-hidden group"
-                >
-                  <p className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-[#8B5CF6] tabular-nums group-hover:scale-105 transition-transform duration-300">
-                    {item.value}
-                  </p>
-                  <p className={tx('metricLabel', 'text-[#0E0B14] font-semibold tracking-wider')}>
-                    {item.label}
-                  </p>
-                  <p className={tx('cardMeta', 'text-[#5A5550] italic')}>
-                    {item.note}
-                  </p>
-                </motion.div>
-              ))}
+              {[
+                {
+                  icon: Search,
+                  label: 'Evidence-Grounded RCA',
+                  note: 'Root cause is derived only from real logs, metrics, and code diffs fetched at incident time — never guessed beyond the evidence.',
+                },
+                {
+                  icon: Lock,
+                  label: 'Policy-Gated Autonomy',
+                  note: 'Every action is evaluated against OPA risk policy. Critical actions and any plan without a rollback always require human approval.',
+                },
+                {
+                  icon: ShieldCheck,
+                  label: 'Independent Verification',
+                  note: 'Each remediation is independently re-fetched and verified before an incident can close, with automatic rollback on failure.',
+                },
+              ].map((item, idx) => {
+                const Icon = item.icon;
+                return (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.4, delay: idx * 0.1 }}
+                    className="rounded-xl border border-[#E8E2D9] bg-white p-6 sm:p-8 space-y-3 text-center shadow-sm hover:shadow-lg hover:border-[#8B5CF6]/40 transition-all duration-300 overflow-hidden group"
+                  >
+                    <div className="flex justify-center">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-[#4C2A85]/20 bg-[#4C2A85]/10 group-hover:scale-105 transition-transform duration-300">
+                        <Icon className="h-6 w-6 text-[#8B5CF6]" />
+                      </div>
+                    </div>
+                    <p className={tx('metricLabel', 'text-[#0E0B14] font-semibold tracking-wider')}>
+                      {item.label}
+                    </p>
+                    <p className={tx('cardMeta', 'text-[#5A5550] italic')}>
+                      {item.note}
+                    </p>
+                  </motion.div>
+                );
+              })}
             </div>
           </div>
         </section>

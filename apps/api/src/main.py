@@ -274,6 +274,9 @@ _lifespan_logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """FastAPI lifespan — start GitHub monitor on boot, cancel on shutdown."""
+    if os.getenv("ENVIRONMENT", "local").strip().lower() in {"test", "ci"}:
+        yield
+        return
     interval = int(os.getenv("GITHUB_MONITOR_INTERVAL_SECONDS", "60"))
     monitor_task = asyncio.create_task(run_github_monitor(interval_seconds=interval))
     _lifespan_logger.info("[Lifespan] GitHub monitor started (interval=%ds)", interval)
@@ -321,6 +324,10 @@ app.add_middleware(
 # Exception handlers for standard envelope response
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+from mcp_client.lock import ResourceLockUnavailableError
+from apps.api.src.middleware.envelope import resource_lock_exception_handler
+app.add_exception_handler(ResourceLockUnavailableError, resource_lock_exception_handler)
 
 # Include all routers under /api/v1 prefix (health checks also available at root)
 for r in ALL_ROUTERS:

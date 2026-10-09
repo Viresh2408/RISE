@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 from typing import Any, Generator
+from fastapi import HTTPException
+from db.runtime import allows_local_fallbacks
 
 try:
     import redis
@@ -25,10 +27,17 @@ _REDIS_POOL = None if redis is None else redis.ConnectionPool.from_url(_REDIS_UR
 def get_redis_client() -> Generator[Any, None, None]:
     """FastAPI dependency: yield a redis.Redis client, close on teardown."""
     if redis is None:
+        if not allows_local_fallbacks():
+            raise HTTPException(503, detail={"code": "REDIS_UNAVAILABLE", "message": "Redis is required in deployed environments", "details": {}})
         yield None
         return
     client = redis.Redis(connection_pool=_REDIS_POOL, decode_responses=False)
     try:
+        if not allows_local_fallbacks():
+            try:
+                client.ping()
+            except Exception as exc:
+                raise HTTPException(503, detail={"code": "REDIS_UNAVAILABLE", "message": "Redis connection failed", "details": {}}) from exc
         yield client
     finally:
         client.close()

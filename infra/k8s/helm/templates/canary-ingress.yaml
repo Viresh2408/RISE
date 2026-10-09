@@ -1,0 +1,27 @@
+{{- if .Values.canary.enabled }}
+# nginx canary Ingress: routes .Values.canary.weight % of traffic to the
+# rise-api-canary Service. Requires a canary-tracked workload (track=canary) to
+# have endpoints; the base chart ships track=stable pods only.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rise-api-canary-ingress
+  labels:
+    {{- include "rise-api.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: {{ .Values.canary.weight | quote }}
+spec:
+  ingressClassName: {{ .Values.canary.ingressClassName }}
+  rules:
+    - host: {{ .Values.canary.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rise-api-canary
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

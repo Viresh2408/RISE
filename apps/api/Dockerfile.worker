@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.7
+# RISE Celery worker + beat image.  Build context MUST be the repo root:
+#   docker build -f apps/api/Dockerfile.worker -t rise-worker .
+# The Celery app is apps.api.src.tasks.celery_app (broker = Redis).  celery is a
+# container-only runtime dependency (kept out of the default poetry environment
+# so the unit suite's `try/except ImportError` guard in tasks.py stays hermetic);
+# it is pinned and pip-installed into the venv here.
+
+# --- Builder: poetry main deps + celery, into an in-project venv ---
+FROM python:3.12-slim AS builder
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    POETRY_VERSION=2.4.1 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=1
+RUN pip install --no-cache-dir "poetry==${POETRY_VERSION}"
+WORKDIR /app
+COPY pyproject.toml poetry.lock ./
+COPY packages/rise-core/ packages/rise-core/
+RUN poetry install --only main --no-root \
+ && /app/.venv/bin/pip install --no-cache-dir "celery[redis]==5.4.0"
+
+# --- Runtime ---
+FROM python:3.12-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app:/app/packages/rise-core"
+WORKDIR /app
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin rise
+COPY --from=builder /app/.venv /app/.venv
+COPY packages/ packages/
+COPY apps/api/ apps/api/
+COPY apps/agents/ apps/agents/
+COPY prompts/ prompts/
+COPY policies/ policies/
+COPY alembic.ini ./
+USER rise
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD celery -A apps.api.src.tasks.celery_app inspect ping -t 5 || exit 1
+# Single process runs the worker with an embedded beat scheduler (-B); run only
+# one replica of this image so beat does not double-schedule.
+CMD ["celery", "-A", "apps.api.src.tasks.celery_app", "worker", "--beat", "--loglevel=info"]
